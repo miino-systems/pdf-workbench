@@ -32,3 +32,11 @@ export {
   type PageRangeRow,
   type PageRangesDocument,
 } from './export';
+export { normalizeSequenceConfig, type NormalizedSequence } from './normalize';
+export {
+  importSequenceText,
+  parseSequenceList,
+  parseSequenceJson,
+  type ImportSequenceOptions,
+  type ImportedSequence,
+} from './import';

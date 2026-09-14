@@ -199,6 +199,8 @@ orderFiles(config, paths): { file; listed; missing }[]      // name: 自然順 /
 naturalCompare / compareFileNames                           // Intl.Collator('en', { numeric: true })
 sequenceItemFor(resolved, file); describeRange(item)        // 'p.21–28' / '除外' / '—'
 materializeOrder / useNameOrder / moveFile / setFileOverrides / removeMissingEntries / removeEntry   // pure, 新しい config を返す
+normalizeSequenceConfig(json: unknown): { config; problems[] }   // 欠けたキーは既定値, 不正な entry は除外 (loadWorkspace / import で使用)
+importSequenceText(text, { papersDir; files? }): { config; format: 'list' | 'json'; warnings }   // 1 行 1 ファイル名 (末尾 数字/skip) or sequence.json
 pageRangeRows(resolved, { outputFor? }): PageRangeRow[]     // { filename; path; output?; page_start?; page_end?; page_count?; skipped }
 formatPageRangesTable(rows, ',' | '\t'); formatPageRangesJson(rows, { generatedAt; firstPage; lastPage? })
 ```
@@ -246,6 +248,7 @@ class AppController { store: Store<AppState>; journal?: HistoryJournal; snapshot
 }
 generateStampedPdf(ctrl, sourcePath)   // state/generate.ts: FontResolver → applyStamps(pageNumberStart) → output/ 書き込み → jobs.json → pdf.generated
 exportPageRanges(ctrl)                 // state/pageRanges.ts: output/page-ranges.csv + .json → sequence.exported
+importSequenceFile(ctrl, file)         // state/sequenceImport.ts: ドロップされた一覧/JSON → sequence.json (manual) → sequence.updated
 ```
 UI (`src/ui`) は vanilla TS。`Section.mount(root, ctrl)` が state 変更ごとの update 関数を返す。
 

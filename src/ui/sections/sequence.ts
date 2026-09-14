@@ -23,6 +23,7 @@ import {
 } from '@/sequence';
 import type { AppState } from '@/state/app';
 import { currentPageRangeRows, exportPageRanges } from '@/state/pageRanges';
+import { importSequenceFile } from '@/state/sequenceImport';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
 import { button, copyToClipboard, h, replaceChildren } from '../dom';
@@ -84,6 +85,70 @@ export const sequenceSection: Section = {
       ),
     );
 
+    // -------------------------------------------------------------- import
+    const fileInput = h('input', {
+      type: 'file',
+      accept: '.txt,.json,.csv,text/plain,application/json',
+      style: 'display:none',
+      on: {
+        change: () => {
+          const f = fileInput.files?.[0];
+          fileInput.value = '';
+          if (f) void runImport(f);
+        },
+      },
+    });
+    const dropZone = h(
+      'div',
+      {
+        class: 'drop-zone',
+        attrs: { role: 'button', tabindex: '0' },
+        title: 'ファイル順の一覧（.txt: 1 行 1 ファイル / .json: sequence.json）をここにドロップ',
+        on: {
+          dragover: (ev) => {
+            ev.preventDefault();
+            if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+            dropZone.classList.add('active');
+          },
+          dragleave: () => dropZone.classList.remove('active'),
+          drop: (ev) => {
+            ev.preventDefault();
+            dropZone.classList.remove('active');
+            const f = ev.dataTransfer?.files?.[0];
+            if (f) void runImport(f);
+          },
+          click: () => fileInput.click(),
+          keydown: (ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              fileInput.click();
+            }
+          },
+        },
+      },
+      h('strong', null, '一覧ファイルをここにドロップ'),
+      h('span', { class: 'muted' }, '（クリックで選択）'),
+      h(
+        'span',
+        { class: 'muted settings-note' },
+        '.txt: 1 行 1 ファイル名（末尾に 数字 = 開始番号固定，skip = 除外，# はコメント）／ .json: sequence.json 形式．' +
+          '読み込んだ内容で sequence.json を上書きします（手動順）．',
+      ),
+      fileInput,
+    );
+    const importPanel = h('div', { class: 'panel' }, h('h2', null, 'ファイル順の読み込み'), dropZone);
+
+    async function runImport(file: File): Promise<void> {
+      if (!ctrl.state.workspace) {
+        ctrl.toast('warn', 'Workspace を開いてから読み込んでください');
+        return;
+      }
+      const res = await ctrl.run(`${file.name} を読み込み`, () => importSequenceFile(ctrl, file));
+      if (!res) return;
+      ctrl.toast('ok', `${res.source} から ${res.config.entries.length} 件の順序を読み込みました`);
+      for (const w of res.warnings) ctrl.toast('warn', w, 10000);
+    }
+
     // ---------------------------------------------------------------- list
     const listPanel = h('div', { class: 'panel' });
 
@@ -122,7 +187,7 @@ export const sequenceSection: Section = {
       exportPreview,
     );
 
-    root.append(h('div', { class: 'grid grid-2' }, h('div', null, settingsPanel, listPanel), exportPanel));
+    root.append(h('div', { class: 'grid grid-2' }, h('div', null, settingsPanel, importPanel, listPanel), exportPanel));
 
     // ------------------------------------------------------------ helpers
     async function commit(mutate: (cfg: SequenceConfig) => SequenceConfig, event?: Record<string, unknown>): Promise<void> {
@@ -281,6 +346,7 @@ export const sequenceSection: Section = {
     return (state: AppState) => {
       const ws = state.workspace;
       const disabled = !ws;
+      dropZone.classList.toggle('disabled', disabled);
       orderSelect.disabled = disabled;
       firstPageInput.disabled = disabled;
       startOnSelect.disabled = disabled;

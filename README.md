@@ -141,6 +141,20 @@ git push
 }
 ```
 
+- 順序を外部で決める場合は、一覧ファイルを Sequence タブの「ファイル順の読み込み」にドロップします（`.txt` は 1 行 1 ファイル名。
+  末尾に数字を付けると開始番号の固定、`skip` で除外、`#` はコメント。`.json` は `sequence.json` 形式）。
+  読み込んだ内容で `sequence.json` を手動順として上書きします。ドロップしたファイル自体は保存しません。
+
+  ```
+  # 予稿集の順序
+  front-matter.pdf skip
+  paper001.pdf
+  paper002.pdf
+  paper003.pdf 41
+  ```
+
+- スクリプトで `.pdf-workbench/sequence.json` を直接書いても構いません。`entries` だけ（`{"entries":[{"file":"papers/paper001.pdf"}, …]}`
+  または `["papers/paper001.pdf", …]` でも可）あれば、残りのキーは既定値（`order: manual`, `firstPage: 1`, `startOn: any`）で補われます。
 - 各ファイルの `page_start–page_end` は Sequence タブと PDF タブのファイル一覧に表示されます。
 - 「CSV / JSON を output/ に書き出す」で `output/page-ranges.csv`（`filename,page_start,page_end,page_count`）と
   `output/page-ranges.json`（同じ行 + `path` / `output` / `skipped`）を出力します。目次や索引の生成に使えます。

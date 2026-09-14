@@ -226,3 +226,13 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 
 /* settings section */
 .settings-note { font-size: 12px; }
+
+/* Sequence tab: drop target for a file-order list */
+.drop-zone {
+  display: flex; flex-direction: column; gap: 4px; align-items: center; text-align: center;
+  padding: 18px 12px; border: 2px dashed var(--border); border-radius: var(--radius);
+  background: var(--bg); cursor: pointer;
+}
+.drop-zone:hover, .drop-zone.active { border-color: var(--accent); }
+.drop-zone.active { background: var(--panel); }
+.drop-zone.disabled { opacity: .5; cursor: not-allowed; }

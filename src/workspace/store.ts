@@ -9,6 +9,7 @@ import {
   DEFAULT_GITIGNORE,
 } from './defaults';
 import { WorkspaceFS } from './fs';
+import { normalizeSequenceConfig } from '@/sequence/normalize';
 
 /** In-memory view of a loaded workspace: the FS handle plus its 5 config files. */
 export interface WorkspaceState {
@@ -133,10 +134,14 @@ export async function loadWorkspace(fs: WorkspaceFS): Promise<WorkspaceState> {
   const stamps = await loadJsonFile(fs, WORKBENCH_FILES.stamps, createDefaultStampsConfig, warnings);
   const preflight = await loadJsonFile(fs, WORKBENCH_FILES.preflight, createDefaultPreflightConfig, warnings);
   const jobs = await loadJsonFile(fs, WORKBENCH_FILES.jobs, createDefaultJobsConfig, warnings);
-  const sequence = await loadJsonFile(fs, WORKBENCH_FILES.sequence, createDefaultSequenceConfig, warnings, {
+  // sequence.json may be written by hand or by a script: fill in missing
+  // keys and drop malformed entries instead of failing.
+  const rawSequence = await loadJsonFile<unknown>(fs, WORKBENCH_FILES.sequence, createDefaultSequenceConfig, warnings, {
     optional: true,
   });
-  return { fs, config, stamps, preflight, jobs, sequence, warnings };
+  const normalized = normalizeSequenceConfig(rawSequence);
+  for (const p of normalized.problems) warnings.push(`${WORKBENCH_FILES.sequence}: ${p}`);
+  return { fs, config, stamps, preflight, jobs, sequence: normalized.config, warnings };
 }
 
 export async function saveWorkspaceConfig(fs: WorkspaceFS, config: WorkspaceConfig): Promise<void> {

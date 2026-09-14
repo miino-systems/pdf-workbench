@@ -207,3 +207,22 @@ th { color: var(--muted); font-weight: 500; font-size: 12px; }
 .events { max-height: 400px; overflow: auto; }
 .events pre { white-space: pre-wrap; word-break: break-all; }
 kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; font-size: 11px; }
+
+/* stamps section */
+.font-picker { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; background: var(--bg); }
+.font-picker-summary { margin-bottom: 6px; }
+.font-picker-body { margin-top: 6px; }
+.anchor-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; width: 132px; }
+.anchor-btn { padding: 4px 0; justify-content: center; }
+.anchor-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.position-editor { display: flex; flex-direction: column; gap: 6px; }
+
+/* pdf section */
+.stamp-overlay-layer { position: absolute; inset: 0; pointer-events: none; }
+.stamp-overlay-layer .stamp-overlay { pointer-events: auto; }
+
+/* history section */
+.snapshot-view { margin-top: 8px; }
+
+/* settings section */
+.settings-note { font-size: 12px; }

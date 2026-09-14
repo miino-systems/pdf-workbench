@@ -5,6 +5,6 @@
  */
 export { configurePdfjsWorker } from './worker.js';
 export { loadPdfDocument, destroyPdfDocument, type LoadPdfDocumentOptions } from './document.js';
-export { inspectPdf, getLinkAnnotations, type LinkAnnotation } from './inspect.js';
+export { inspectPdf, countPdfPages, getLinkAnnotations, type LinkAnnotation } from './inspect.js';
 export { getPageTextItems, type PageTextItem } from './text.js';
 export { getPdfjs, type PdfjsModule } from './pdfjs.js';

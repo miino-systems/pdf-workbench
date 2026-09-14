@@ -4,7 +4,7 @@
  * Workspace configuration never lives here.
  */
 export type Theme = 'system' | 'light' | 'dark';
-export type TabId = 'workspace' | 'pdf' | 'stamps' | 'preflight' | 'history' | 'settings';
+export type TabId = 'workspace' | 'pdf' | 'stamps' | 'sequence' | 'preflight' | 'history' | 'settings';
 export type DisplayUnit = 'mm' | 'pt';
 
 export interface UiPrefs {

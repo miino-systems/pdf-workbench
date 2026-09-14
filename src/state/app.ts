@@ -11,6 +11,7 @@ import type {
   PageSelector,
   PreflightConfig,
   PreflightReport,
+  SequenceConfig,
   StampDefinition,
   StampInstance,
   StampPosition,
@@ -34,17 +35,26 @@ import {
   rememberWorkspaceHandle,
   saveJobsConfig,
   savePreflightConfig,
+  saveSequenceConfig,
   saveStampsConfig,
   saveWorkspaceConfig,
   type RecentWorkspace,
   type WorkspaceState,
 } from '@/workspace';
 import { EVENT_TYPES, HistoryJournal, SnapshotStore } from '@/history';
+import { countPdfPages } from '@/pdf/reader';
+import { resolveSequence, sequenceItemFor, type ResolvedSequence, type SequenceFileInfo } from '@/sequence';
 import type { HistoryEvent } from '@/core/types';
 import { Store } from './store';
 import { loadPrefs, savePrefs, type UiPrefs } from './prefs';
 
-export type FileStatus = 'not-processed' | 'processed' | 'warning' | 'error' | 'source-changed';
+export type FileStatus =
+  | 'not-processed'
+  | 'processed'
+  | 'warning'
+  | 'error'
+  | 'source-changed'
+  | 'numbering-changed';
 
 export interface PdfFileItem extends WorkspaceFileEntry {
   status: FileStatus;
@@ -80,6 +90,11 @@ export interface AppState {
   /** Recently loaded events (for the History tab). */
   events: HistoryEvent[];
   lastReport?: PreflightReport;
+  /**
+   * Continuous page numbering of `files` per `sequence.json`, refreshed by
+   * `refreshSequence()` (page counts are read lazily and cached per file).
+   */
+  sequence?: ResolvedSequence;
 }
 
 let toastSeq = 0;
@@ -98,6 +113,10 @@ export class AppController {
   private wsEpoch = 0;
   /** Bumped on every `selectFile` call so an earlier, still in-flight call doesn't clobber a later one. */
   private selectSeq = 0;
+  /** Bumped on every `refreshSequence` call so a slower, earlier resolution doesn't overwrite a newer one. */
+  private sequenceSeq = 0;
+  /** Page counts of source PDFs, keyed by path and invalidated by size/mtime (reset when the workspace changes). */
+  private pageCountCache = new Map<string, { size: number; lastModified: number; pageCount?: number }>();
 
   constructor() {
     this.store = new Store<AppState>({
@@ -218,6 +237,7 @@ export class AppController {
 
   private async loadInto(handle: FileSystemDirectoryHandle, fs: WorkspaceFS, justInitialized: boolean): Promise<void> {
     this.wsEpoch += 1;
+    this.pageCountCache.clear();
     const workspace = await loadWorkspace(fs);
     this.journal = new HistoryJournal(fs, { hashChain: workspace.config.history.hashChain });
     this.snapshots = new SnapshotStore(fs);
@@ -230,6 +250,7 @@ export class AppController {
       selectedSha256: undefined,
       pageCount: 0,
       currentPage: 1,
+      sequence: undefined,
     });
     for (const w of workspace.warnings) this.toast('warn', w);
     await rememberWorkspaceHandle(handle).catch(() => undefined);
@@ -243,6 +264,7 @@ export class AppController {
 
   closeWorkspace(): void {
     this.wsEpoch += 1;
+    this.pageCountCache.clear();
     this.journal = undefined;
     this.snapshots = undefined;
     this.store.set({
@@ -255,6 +277,7 @@ export class AppController {
       selectedSha256: undefined,
       events: [],
       pageCount: 0,
+      sequence: undefined,
     });
   }
 
@@ -266,7 +289,11 @@ export class AppController {
 
   // ---------------------------------------------------------------- files
 
-  /** List `papers/*.pdf` and compute the status of each from jobs.json. */
+  /**
+   * List `papers/*.pdf` and compute the status of each from jobs.json and
+   * the continuous numbering (`refreshSequence`, awaited so callers see the
+   * page ranges as soon as this resolves).
+   */
   async refreshFiles(): Promise<void> {
     const ws = this.requireWorkspace();
     const entries = await ws.fs.list(ws.config.directories.papers, { extensions: ['.pdf'] });
@@ -275,13 +302,77 @@ export class AppController {
       const job = latestJob(ws.jobs, e.path);
       const old = prev.get(e.path);
       const sha = old && old.lastModified === e.lastModified && old.size === e.size ? old.sha256 : undefined;
-      return { ...e, job, sha256: sha, status: computeStatus(job, sha) };
+      return { ...e, job, sha256: sha, status: this.statusFor(job, sha, e.path) };
     });
     this.store.set({ files });
     // Detect "source changed" lazily for processed files (hash compare).
     for (const f of files) {
       if (f.job && !f.sha256) void this.hashFile(f.path);
     }
+    await this.refreshSequence();
+  }
+
+  /** `computeStatus` against the currently resolved sequence (if any). */
+  private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string): FileStatus {
+    const item = sequenceItemFor(this.state.sequence, path);
+    return computeStatus(job, hash, item ? { pageStart: item.pageStart } : undefined);
+  }
+
+  // ------------------------------------------------------------- sequence
+
+  /**
+   * Re-resolve the continuous page numbering for the current file list:
+   * reads the page count of every source PDF not yet cached, then updates
+   * `state.sequence` and each file's status. Returns the resolved sequence
+   * (undefined when no workspace is open or the result is stale).
+   */
+  async refreshSequence(): Promise<ResolvedSequence | undefined> {
+    const ws = this.state.workspace;
+    if (!ws) return undefined;
+    const epoch = this.wsEpoch;
+    const seq = ++this.sequenceSeq;
+    const infos: SequenceFileInfo[] = [];
+    for (const f of this.state.files) {
+      const cached = this.pageCountCache.get(f.path);
+      let pageCount = cached && cached.size === f.size && cached.lastModified === f.lastModified ? cached.pageCount : undefined;
+      if (pageCount === undefined) {
+        try {
+          pageCount = await countPdfPages(await ws.fs.readBytes(f.path));
+        } catch (e) {
+          console.warn('page count failed', f.path, e);
+          pageCount = undefined;
+        }
+        if (epoch !== this.wsEpoch) return undefined;
+        this.pageCountCache.set(f.path, { size: f.size, lastModified: f.lastModified, pageCount });
+      }
+      infos.push({ path: f.path, pageCount });
+    }
+    if (epoch !== this.wsEpoch || seq !== this.sequenceSeq) return undefined;
+    const resolved = resolveSequence(ws.sequence, infos);
+    this.store.set((s) => ({
+      sequence: resolved,
+      files: s.files.map((f) => {
+        const item = sequenceItemFor(resolved, f.path);
+        return { ...f, status: computeStatus(f.job, f.sha256, item ? { pageStart: item.pageStart } : undefined) };
+      }),
+    }));
+    return resolved;
+  }
+
+  /** Persist a new `sequence.json`, log the change and re-resolve the numbering. */
+  async updateSequence(next: SequenceConfig, event?: Record<string, unknown>): Promise<void> {
+    const ws = this.requireWorkspace();
+    ws.sequence = next;
+    await saveSequenceConfig(ws.fs, next);
+    this.store.set({ workspace: { ...ws } });
+    await this.log(EVENT_TYPES.sequenceUpdated, {
+      order: next.order,
+      firstPage: next.firstPage,
+      startOn: next.startOn,
+      entries: next.entries.length,
+      ...event,
+    });
+    await this.refreshSequence();
   }
 
   private async hashFile(path: string): Promise<string | undefined> {
@@ -297,7 +388,7 @@ export class AppController {
       // this result unconditionally could attach the wrong hash to it.
       if (epoch !== this.wsEpoch) return undefined;
       this.store.set((s) => ({
-        files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: computeStatus(f.job, hash) } : f)),
+        files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: this.statusFor(f.job, hash, path) } : f)),
       }));
       return hash;
     } catch {
@@ -326,7 +417,7 @@ export class AppController {
         selectedBytes: bytes,
         selectedSha256: hash,
         currentPage: 1,
-        files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: computeStatus(f.job, hash) } : f)),
+        files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: this.statusFor(f.job, hash, path) } : f)),
       }));
       const item = this.state.files.find((f) => f.path === path);
       if (item?.status === 'source-changed') {
@@ -509,6 +600,7 @@ export class AppController {
       stamps: ws.stamps,
       preflight: ws.preflight,
       jobs: ws.jobs,
+      sequence: ws.sequence,
     });
     await this.log(EVENT_TYPES.snapshotSaved, { path, reason });
     return path;
@@ -530,9 +622,21 @@ export function latestJob(jobs: JobsConfig, source: string): JobRecord | undefin
   return list.length ? list[list.length - 1] : undefined;
 }
 
-export function computeStatus(job: JobRecord | undefined, currentHash: string | undefined): FileStatus {
+/**
+ * Status of a source file from its latest job, its current hash and (when
+ * the sequence has been resolved) the continuous page number it should
+ * start at. A job that recorded a `pageStart` is flagged when that number
+ * no longer matches; jobs without one (skipped files, or generated before
+ * the sequence existed) are never flagged for numbering.
+ */
+export function computeStatus(
+  job: JobRecord | undefined,
+  currentHash: string | undefined,
+  numbering?: { pageStart?: number },
+): FileStatus {
   if (!job) return 'not-processed';
   if (currentHash && job.sourceHash !== currentHash) return 'source-changed';
+  if (numbering && job.pageStart !== undefined && job.pageStart !== numbering.pageStart) return 'numbering-changed';
   if (job.status === 'error') return 'error';
   if (job.status === 'warning') return 'warning';
   return 'processed';
@@ -544,4 +648,5 @@ export const STATUS_LABEL: Record<FileStatus, { icon: string; text: string; cls:
   warning: { icon: '⚠', text: 'Warning', cls: 'warn' },
   error: { icon: '✗', text: 'Error', cls: 'err' },
   'source-changed': { icon: '⚠', text: 'Source changed', cls: 'warn' },
+  'numbering-changed': { icon: '⚠', text: 'Page numbers changed', cls: 'warn' },
 };

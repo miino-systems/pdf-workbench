@@ -1,21 +1,23 @@
 import { WORKBENCH_FILES } from '@/core/types';
-import type { JobsConfig, PreflightConfig, StampsConfig, WorkspaceConfig } from '@/core/types';
+import type { JobsConfig, PreflightConfig, SequenceConfig, StampsConfig, WorkspaceConfig } from '@/core/types';
 import {
   createDefaultJobsConfig,
   createDefaultPreflightConfig,
+  createDefaultSequenceConfig,
   createDefaultStampsConfig,
   createDefaultWorkspaceConfig,
   DEFAULT_GITIGNORE,
 } from './defaults';
 import { WorkspaceFS } from './fs';
 
-/** In-memory view of a loaded workspace: the FS handle plus its 4 config files. */
+/** In-memory view of a loaded workspace: the FS handle plus its 5 config files. */
 export interface WorkspaceState {
   fs: WorkspaceFS;
   config: WorkspaceConfig;
   stamps: StampsConfig;
   preflight: PreflightConfig;
   jobs: JobsConfig;
+  sequence: SequenceConfig;
   /** Non-fatal issues encountered while loading (missing/corrupt files -> defaults used). */
   warnings: string[];
 }
@@ -62,6 +64,7 @@ export async function initializeWorkspace(fs: WorkspaceFS, opts?: { name?: strin
   const stamps = createDefaultStampsConfig();
   const preflight = createDefaultPreflightConfig();
   const jobs = createDefaultJobsConfig();
+  const sequence = createDefaultSequenceConfig();
 
   // Directory tree.
   const dirs = [
@@ -82,6 +85,7 @@ export async function initializeWorkspace(fs: WorkspaceFS, opts?: { name?: strin
   await fs.writeText(WORKBENCH_FILES.stamps, toPrettyJson(stamps));
   await fs.writeText(WORKBENCH_FILES.preflight, toPrettyJson(preflight));
   await fs.writeText(WORKBENCH_FILES.jobs, toPrettyJson(jobs));
+  await fs.writeText(WORKBENCH_FILES.sequence, toPrettyJson(sequence));
 
   // Append-only history log: create empty if it doesn't already exist.
   if (!(await fs.exists(WORKBENCH_FILES.events))) {
@@ -90,7 +94,7 @@ export async function initializeWorkspace(fs: WorkspaceFS, opts?: { name?: strin
 
   await ensureGitignore(fs);
 
-  return { fs, config, stamps, preflight, jobs, warnings: [] };
+  return { fs, config, stamps, preflight, jobs, sequence, warnings: [] };
 }
 
 /** Read one JSON config file, falling back to `fallback()` when missing or corrupt. */
@@ -98,10 +102,13 @@ async function loadJsonFile<T>(
   fs: WorkspaceFS,
   path: string,
   fallback: () => T,
-  warnings: string[]
+  warnings: string[],
+  opts?: { optional?: boolean }
 ): Promise<T> {
   if (!(await fs.exists(path))) {
-    warnings.push(`${path} not found; using defaults.`);
+    // Files added in a later format revision (`optional`) are simply absent
+    // in older workspaces: fall back silently instead of warning on every open.
+    if (!opts?.optional) warnings.push(`${path} not found; using defaults.`);
     return fallback();
   }
   try {
@@ -115,8 +122,10 @@ async function loadJsonFile<T>(
 }
 
 /**
- * Load a workspace's 4 config files. Missing or corrupt files fall back to
- * defaults and are recorded in `WorkspaceState.warnings`.
+ * Load a workspace's config files. Missing or corrupt files fall back to
+ * defaults and are recorded in `WorkspaceState.warnings` (a missing
+ * `sequence.json` is not reported: workspaces initialised before it existed
+ * simply get the default, name-ordered numbering).
  */
 export async function loadWorkspace(fs: WorkspaceFS): Promise<WorkspaceState> {
   const warnings: string[] = [];
@@ -124,7 +133,10 @@ export async function loadWorkspace(fs: WorkspaceFS): Promise<WorkspaceState> {
   const stamps = await loadJsonFile(fs, WORKBENCH_FILES.stamps, createDefaultStampsConfig, warnings);
   const preflight = await loadJsonFile(fs, WORKBENCH_FILES.preflight, createDefaultPreflightConfig, warnings);
   const jobs = await loadJsonFile(fs, WORKBENCH_FILES.jobs, createDefaultJobsConfig, warnings);
-  return { fs, config, stamps, preflight, jobs, warnings };
+  const sequence = await loadJsonFile(fs, WORKBENCH_FILES.sequence, createDefaultSequenceConfig, warnings, {
+    optional: true,
+  });
+  return { fs, config, stamps, preflight, jobs, sequence, warnings };
 }
 
 export async function saveWorkspaceConfig(fs: WorkspaceFS, config: WorkspaceConfig): Promise<void> {
@@ -143,10 +155,15 @@ export async function saveJobsConfig(fs: WorkspaceFS, jobs: JobsConfig): Promise
   await fs.writeText(WORKBENCH_FILES.jobs, toPrettyJson(jobs));
 }
 
-/** Persist all 4 config files from a `WorkspaceState` in one call. */
+export async function saveSequenceConfig(fs: WorkspaceFS, sequence: SequenceConfig): Promise<void> {
+  await fs.writeText(WORKBENCH_FILES.sequence, toPrettyJson(sequence));
+}
+
+/** Persist all 5 config files from a `WorkspaceState` in one call. */
 export async function saveAll(state: WorkspaceState): Promise<void> {
   await saveWorkspaceConfig(state.fs, state.config);
   await saveStampsConfig(state.fs, state.stamps);
   await savePreflightConfig(state.fs, state.preflight);
   await saveJobsConfig(state.fs, state.jobs);
+  await saveSequenceConfig(state.fs, state.sequence);
 }

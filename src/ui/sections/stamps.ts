@@ -519,6 +519,7 @@ function buildPageNumberFields(ctrl: AppController, layer: PageNumberLayer, sche
     field('フォント', fontPicker),
     h('div', { class: 'row' }, field('サイズ (pt)', sizeInput), field('色', colorRow)),
     h('div', { class: 'row' }, field('開始番号 (startAt)', startAtInput), field('総ページ数上書き', totalOverrideInput)),
+    h('p', { class: 'muted settings-note' }, 'Sequence タブで通し番号が割り当てられたファイルでは，startAt の代わりにその番号が使われます．'),
     h('div', { class: 'row' }, field('dx (pt)', dxInput), field('dy (pt)', dyInput)),
   );
 }

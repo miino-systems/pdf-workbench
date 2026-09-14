@@ -1,5 +1,5 @@
 import { DEFAULT_DIRECTORIES, WORKSPACE_FORMAT_VERSION } from '@/core/types';
-import type { JobsConfig, PreflightConfig, StampsConfig, WorkspaceConfig } from '@/core/types';
+import type { JobsConfig, PreflightConfig, SequenceConfig, StampsConfig, WorkspaceConfig } from '@/core/types';
 
 /**
  * Build a fresh `WorkspaceConfig` for a newly initialised workspace.
@@ -60,6 +60,20 @@ export function createDefaultPreflightConfig(): PreflightConfig {
       marginRaster: false,
       stampCollision: false,
     },
+  };
+}
+
+/**
+ * Build a fresh `SequenceConfig`: files numbered continuously in file-name
+ * order starting at 1, with no per-file overrides.
+ */
+export function createDefaultSequenceConfig(): SequenceConfig {
+  return {
+    version: WORKSPACE_FORMAT_VERSION,
+    order: 'name',
+    firstPage: 1,
+    startOn: 'any',
+    entries: [],
   };
 }
 

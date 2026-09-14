@@ -26,7 +26,9 @@
 │  │ preflight/    │  │ git-helper/  │  ┌───────────────┐  │  ┌──────────────────────┐ │
 │  │               │  │ (commands)   │  │ crypto/       │  │  │ localStorage         │ │
 │  └───────────────┘  └──────────────┘  │ (Web Crypto)  │  │  │ (UI prefs only)      │ │
-│                                       └───────────────┘  │  └──────────────────────┘ │
+│  ┌───────────────┐                    └───────────────┘  │  └──────────────────────┘ │
+│  │ sequence/     │  (continuous page numbering across papers/, page-ranges export)     │
+│  └───────────────┘                                                                     │
 │                                                                                     │
 │  ─── no network I/O after the static bundle is loaded ───                           │
 └─────────────────────────────────────────────────────────────────────────────────────┘
@@ -55,7 +57,8 @@ type StampLayer = TextLayer | ImageLayer | PageNumberLayer | FutureLayer   // li
 type PageSelector = all | first | last | range | list | odd | even
 interface StampPosition { anchor: StampAnchor; offsetX: pt; offsetY: pt }  // UI では mm 表示可
 type FontRef = standard | local (queryLocalFonts) | workspace (fonts/*.ttf) | file (user pick)   // + sha256
-interface JobRecord { source; sourceHash: 'sha256:…'; output; stampInstances; fonts; status }
+interface JobRecord { source; sourceHash: 'sha256:…'; output; stampInstances; fonts; pageStart?; pageEnd?; status }
+interface SequenceConfig { order: 'name' | 'manual'; firstPage; startOn: 'any' | 'odd' | 'even'; entries: { file; startPage?; skip? }[] }
 interface HistoryEvent { ts; type; prevHash?; hash?; …payload }
 interface PreflightConfig / PreflightReport
 ```
@@ -188,6 +191,21 @@ checkStampCollision(canvas, rect)             // Phase 2 raster based
 reportFileName(file, date): string
 ```
 
+### `sequence/`  (通しページ番号)
+```ts
+resolveSequence(config: SequenceConfig, files: { path; pageCount? }[]): ResolvedSequence
+  // items: { file; index; listed; missing; skipped; pinned; pageCount?; pageStart?; pageEnd? }[], lastPage?, numberedPages, warnings
+orderFiles(config, paths): { file; listed; missing }[]      // name: 自然順 / manual: entries 順 + 未登録は名前順で末尾
+naturalCompare / compareFileNames                           // Intl.Collator('en', { numeric: true })
+sequenceItemFor(resolved, file); describeRange(item)        // 'p.21–28' / '除外' / '—'
+materializeOrder / useNameOrder / moveFile / setFileOverrides / removeMissingEntries / removeEntry   // pure, 新しい config を返す
+pageRangeRows(resolved, { outputFor? }): PageRangeRow[]     // { filename; path; output?; page_start?; page_end?; page_count?; skipped }
+formatPageRangesTable(rows, ',' | '\t'); formatPageRangesJson(rows, { generatedAt; firstPage; lastPage? })
+```
+番号付け規則: `skip` → 番号なし（cursor 不変）。`startPage` → その値から（`startOn` の揃えは適用しない）。それ以外は cursor を `startOn` で揃えて開始。
+cursor は `pageEnd + 1` へ進む。ページ数が取れないファイル以降は、次の `startPage` まで番号を確定しない。
+`pdf/stamper` には `StampJobInput.pageNumberStart` として渡され、pageNumber layer は `pageNumberStart + (物理ページ − 1)` を表示する（`startAt` は無視）。
+
 ### `git-helper/`
 ```ts
 gitInitCommands(): string[]; gitUpdateCommands(): string[]; DEFAULT_GITIGNORE: string; explainGitignore(): string
@@ -207,6 +225,7 @@ workspace/
 │   ├─ stamps.json           StampsConfig  { definitions[], instances[] }
 │   ├─ preflight.json        PreflightConfig
 │   ├─ jobs.json             JobsConfig    { jobs[] }
+│   ├─ sequence.json         SequenceConfig  { order, firstPage, startOn, entries[] }   (無い場合は既定＝名前順)
 │   ├─ reports/              PreflightReport JSON
 │   └─ history/
 │       ├─ events.jsonl      HistoryEvent per line (append-only)
@@ -220,11 +239,13 @@ workspace/
 ```ts
 class AppController { store: Store<AppState>; journal?: HistoryJournal; snapshots?: SnapshotStore
   pickAndOpenWorkspace / openRecent / openHandle / initializePendingWorkspace / closeWorkspace
-  refreshFiles / selectFile / setPage                       // papers/*.pdf 一覧と jobs.json からの状態判定 (sha256 比較)
+  refreshFiles / selectFile / setPage                       // papers/*.pdf 一覧と jobs.json からの状態判定 (sha256 比較, 通し番号の変化)
+  refreshSequence / updateSequence                          // ページ数を読み state.sequence を解決 / sequence.json 保存 + sequence.updated
   updateStamps / setInstanceEnabled / setInstancePosition / setInstancePages / addDefinition / ...   // stamps.json 保存 + events.jsonl
   updateWorkspaceConfig / updatePreflightConfig / recordJob / saveSnapshot / saveReport / log
 }
-generateStampedPdf(ctrl, sourcePath)   // state/generate.ts: FontResolver → applyStamps → output/ 書き込み → jobs.json → pdf.generated
+generateStampedPdf(ctrl, sourcePath)   // state/generate.ts: FontResolver → applyStamps(pageNumberStart) → output/ 書き込み → jobs.json → pdf.generated
+exportPageRanges(ctrl)                 // state/pageRanges.ts: output/page-ranges.csv + .json → sequence.exported
 ```
 UI (`src/ui`) は vanilla TS。`Section.mount(root, ctrl)` が state 変更ごとの update 関数を返す。
 
@@ -255,11 +276,12 @@ Phase 2 以降 (Local Font Access, workspace font, font sha256, snapshot, basic 
 | 3 | raster margin check | 実装済み (preflight.json `checks.marginRaster`) |
 | 3 | history restore / advanced preflight | 未実装 (SnapshotStore.load は実装済み、UI は閲覧のみ) |
 | 3 | hash-chain audit log | 実装済み (workspace.json `history.hashChain`; History タブで検証) |
+| 4 | 通しページ番号 (sequence.json) / page-ranges 書き出し | 実装済み (Sequence タブ; tests/sequence.test.ts, tests/sequence-flow.test.ts) |
 
 ## 7. テスト
 
 ```
-npm test           # vitest (Node): 190+ tests
+npm test           # vitest (Node): 230+ tests
 npm run typecheck
 npm run build
 node e2e/smoke.mjs # optional: Chromium + OPFS で実ブラウザの一連の流れを確認 (要 Playwright)
@@ -272,6 +294,7 @@ node e2e/smoke.mjs # optional: Chromium + OPFS で実ブラウザの一連の流
 | hyperlink が生成後も機能する | tests/stamper.test.ts (URI / GoTo annotation の数と値が一致), tests/app-flow.test.ts, e2e |
 | 日本語フォントを embed できる | tests/stamper.test.ts, tests/app-flow.test.ts (IPAGothic subset, `subset: true`) |
 | 複数スタンプを適用できる | tests/stamper.test.ts (text + pageNumber + image), tests/app-flow.test.ts |
+| 複数 PDF に通しページ番号を振り，`filename, page_start, page_end` を書き出せる | tests/sequence.test.ts (順序・固定・除外・奇数揃え・CSV/JSON), tests/sequence-flow.test.ts (stamp の `{page}`, jobs.json, 順序変更の検知, 再オープン), tests/stamper.test.ts (`pageNumberStart`) |
 | Workspace を閉じて再度開いても設定が復元される | tests/workspace.test.ts, tests/app-flow.test.ts |
 | events.jsonl に操作履歴が残る | tests/history.test.ts, tests/app-flow.test.ts, e2e |
 | PDF が外部ネットワークへ送信されない | tests/no-network.test.ts (静的検査), e2e/smoke.mjs (全リクエストが同一 origin) |

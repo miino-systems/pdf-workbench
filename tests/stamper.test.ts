@@ -5,7 +5,7 @@ import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFString, decod
 import { applyStamps } from '@/pdf/stamper';
 import { FontResolver } from '@/fonts';
 import { sha256 } from '@/fonts/hash';
-import type { StampDefinition, StampInstance } from '@/core/types';
+import type { FontRef, ResolvedFont, StampDefinition, StampInstance } from '@/core/types';
 
 const A4: [number, number] = [595.28, 841.89];
 
@@ -104,6 +104,24 @@ function imageDefinition(src: string): StampDefinition {
     layers: [{ id: 'img', type: 'image', src, width: 40 }],
     defaultPosition: { anchor: 'bottom-right', offsetX: 36, offsetY: 36 },
   };
+}
+
+/** Decoded content stream(s) of one page, for asserting on drawn text operators. */
+async function pageContentText(bytes: Uint8Array, pageIndex: number): Promise<string> {
+  const doc = await PDFDocument.load(bytes);
+  const contents = doc.getPage(pageIndex).node.Contents();
+  if (!contents) return '';
+  const streams =
+    contents instanceof PDFArray
+      ? Array.from({ length: contents.size() }, (_, i) => contents.lookup(i, PDFRawStream))
+      : [contents as PDFRawStream];
+  const raw = streams.map((s) => new TextDecoder().decode(decodePDFRawStream(s).decode())).join('\n');
+  // pdf-lib writes standard-font strings as hex (`<702E2033> Tj`); decode
+  // them to `(p. 3)` so assertions can read the drawn text literally.
+  return raw.replace(/<([0-9A-Fa-f]+)>/g, (_m, hex: string) => {
+    const bytes = hex.match(/.{2}/g)?.map((h) => parseInt(h, 16)) ?? [];
+    return `(${String.fromCharCode(...bytes)})`;
+  });
 }
 
 describe('applyStamps', () => {
@@ -411,6 +429,26 @@ describe('applyStamps', () => {
     const visiblePageWidth = rawHeight; // page displays landscape-swapped
     expect(visibleX).toBeCloseTo(visiblePageWidth - offsetX - boxWidth, 5);
     expect(visibleY).toBeCloseTo(offsetY, 5);
+  });
+
+  it('pageNumberStart numbers by physical page regardless of the selector and overrides startAt', async () => {
+    const sourceBytes = await buildSourcePdf();
+    const def = pageNumberDefinition();
+    (def.layers[0] as { template: string; startAt?: number }).template = 'p. {page}';
+    (def.layers[0] as { startAt?: number }).startAt = 500;
+    const instances: StampInstance[] = [{ id: 'i', stampId: def.id, enabled: true, pages: { kind: 'range', from: 2, to: 3 } }];
+    const resolveFont = async (ref: FontRef): Promise<ResolvedFont> => ({ ref, hashMismatch: false });
+
+    const withStart = await applyStamps({ sourceBytes, definitions: [def], instances, pageNumberStart: 21, resolveFont, resolveImage: async () => tinyPngBytes() });
+    expect(withStart.warnings).toEqual([]);
+    expect(await pageContentText(withStart.bytes, 0)).not.toContain('(p. ');
+    expect(await pageContentText(withStart.bytes, 1)).toContain('(p. 22)');
+    expect(await pageContentText(withStart.bytes, 2)).toContain('(p. 23)');
+
+    // Without a document-level start the layer's own startAt counts *selected* pages.
+    const legacy = await applyStamps({ sourceBytes, definitions: [def], instances, resolveFont, resolveImage: async () => tinyPngBytes() });
+    expect(await pageContentText(legacy.bytes, 1)).toContain('(p. 500)');
+    expect(await pageContentText(legacy.bytes, 2)).toContain('(p. 501)');
   });
 
   it('skips disabled instances entirely', async () => {

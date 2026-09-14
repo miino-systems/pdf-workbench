@@ -12,6 +12,7 @@ import type { PageSize, StampPosition, StampsConfig } from '@/core/types';
 import { checkStampCollision } from '@/preflight';
 import { PdfRenderer, canvasToPdf, pdfToCanvas } from '@/pdf/renderer';
 import { estimateStampBox } from '@/pdf/stamper/measure';
+import { describeRange, sequenceItemFor } from '@/sequence';
 import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
 import { STATUS_LABEL, type AppState, type PdfFileItem } from '@/state/app';
 import { generateStampedPdf } from '@/state/generate';
@@ -20,6 +21,16 @@ import type { Section } from '../app';
 import { button, formatBytes, h, replaceChildren } from '../dom';
 
 const ZOOM_OPTIONS = [50, 75, 100, 150, 200];
+
+/**
+ * The number a page-number stamp would show on physical page `page` of the
+ * selected file: its continuous number when the file is in the sequence
+ * (so the overlay is measured for e.g. `123`, not `1`), else the page itself.
+ */
+function displayedPageNumber(state: AppState, page: number): number {
+  const item = state.selectedFile ? sequenceItemFor(state.sequence, state.selectedFile) : undefined;
+  return item?.pageStart !== undefined ? item.pageStart + page - 1 : page;
+}
 
 export const pdfSection: Section = {
   id: 'pdf',
@@ -118,6 +129,7 @@ export const pdfSection: Section = {
     let collidingIds = new Set<string>();
 
     let lastFilesSnapshot: PdfFileItem[] | undefined;
+    let lastSequenceRef: AppState['sequence'];
     let lastSelectedFile: string | undefined;
     let lastWorkspaceRef: AppState['workspace'];
     let lastStampsRef: StampsConfig | undefined;
@@ -206,7 +218,7 @@ export const pdfSection: Section = {
           const pages = resolvePages(inst.pages, state.pageCount);
           if (!pages.includes(page)) continue;
 
-          const box = estimateStampBox(def, { page, pages: state.pageCount, file });
+          const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
           const position = effectivePosition(def, inst);
           const rect = stampRect(position, pageSize, box);
           const topLeft = pdfToCanvas({ x: rect.x, y: rect.y + rect.height }, pageSize, scale);
@@ -314,7 +326,7 @@ export const pdfSection: Section = {
         if (!def) continue;
         const pages = resolvePages(inst.pages, state.pageCount);
         if (!pages.includes(page)) continue;
-        const box = estimateStampBox(def, { page, pages: state.pageCount, file });
+        const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
         const position = effectivePosition(def, inst);
         const rect = stampRect(position, pageSize, box);
         const result = checkStampCollision(imageData, pageSize, rect);
@@ -350,6 +362,7 @@ export const pdfSection: Section = {
             { class: 'list' },
             state.files.map((f) => {
               const label = STATUS_LABEL[f.status];
+              const range = sequenceItemFor(state.sequence, f.path);
               return h(
                 'li',
                 {
@@ -359,6 +372,9 @@ export const pdfSection: Section = {
                 },
                 h('span', { class: `badge ${label.cls}` }, label.icon),
                 h('span', { class: 'name' }, f.name),
+                range && !range.skipped && range.pageStart !== undefined
+                  ? h('span', { class: 'muted mono', title: '通しページ番号（Sequence タブ）' }, describeRange(range))
+                  : '',
                 h('span', { class: 'muted' }, formatBytes(f.size)),
               );
             }),
@@ -441,6 +457,9 @@ export const pdfSection: Section = {
                 [
                   ['作成日時', job.createdAt],
                   ['出力', job.output],
+                  ...(job.pageStart !== undefined && job.pageEnd !== undefined
+                    ? [['通し番号', `p.${job.pageStart}–${job.pageEnd}`]]
+                    : []),
                   ['ステータス', STATUS_LABEL[file?.status ?? 'processed'].text],
                 ].map(([k, v]) => h('tr', null, h('th', null, k), h('td', null, h('code', null, v)))),
               ),
@@ -536,11 +555,15 @@ export const pdfSection: Section = {
       latestState = state;
 
       const filesChanged =
-        state.files !== lastFilesSnapshot || state.selectedFile !== lastSelectedFile || state.workspace !== lastWorkspaceRef;
+        state.files !== lastFilesSnapshot ||
+        state.selectedFile !== lastSelectedFile ||
+        state.workspace !== lastWorkspaceRef ||
+        state.sequence !== lastSequenceRef;
       if (filesChanged) {
         renderFiles(state);
         lastFilesSnapshot = state.files;
         lastSelectedFile = state.selectedFile;
+        lastSequenceRef = state.sequence;
       }
       lastWorkspaceRef = state.workspace;
 

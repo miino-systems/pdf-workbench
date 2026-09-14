@@ -12,6 +12,8 @@ export const EVENT_TYPES = {
   pdfGenerated: 'pdf.generated',
   snapshotSaved: 'snapshot.saved',
   fontSelected: 'font.selected',
+  sequenceUpdated: 'sequence.updated',
+  sequenceExported: 'sequence.exported',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

@@ -126,17 +126,17 @@ export const sequenceSection: Section = {
           },
         },
       },
-      h('strong', null, '一覧ファイルをここにドロップ'),
+      h('strong', null, '対応表 CSV をここにドロップ'),
       h('span', { class: 'muted' }, '（クリックで選択）'),
       h(
         'span',
         { class: 'muted settings-note' },
-        '.txt: 1 行 1 ファイル名（末尾に 数字 = 開始番号固定，skip = 除外，# はコメント）／ .json: sequence.json 形式．' +
-          '読み込んだ内容で sequence.json を上書きします（手動順）．',
+        'CSV: 1 行 1 ファイル，列は 元ファイル名, 出力ファイル名[, 開始番号 or skip]（先頭行が source/filename ならヘッダ．' +
+          'output/page-ranges.csv もそのまま可）／ .json: sequence.json 形式．読み込んだ内容で sequence.json を上書きします（手動順）．',
       ),
       fileInput,
     );
-    const importPanel = h('div', { class: 'panel' }, h('h2', null, 'ファイル順の読み込み'), dropZone);
+    const importPanel = h('div', { class: 'panel' }, h('h2', null, 'ファイル順と出力名の読み込み'), dropZone);
 
     async function runImport(file: File): Promise<void> {
       if (!ctrl.state.workspace) {
@@ -182,7 +182,7 @@ export const sequenceSection: Section = {
       'div',
       { class: 'panel' },
       h('h2', null, 'ページ範囲の一覧'),
-      h('p', { class: 'muted settings-note' }, 'filename, page_start, page_end, page_count の表を output/page-ranges.csv と .json に書き出します．'),
+      h('p', { class: 'muted settings-note' }, 'filename, output, page_start, page_end, page_count の表を output/page-ranges.csv と .json に書き出します．'),
       h('div', { class: 'row' }, exportBtn, copyBtn),
       exportPreview,
     );
@@ -274,6 +274,21 @@ export const sequenceSection: Section = {
             },
           },
         });
+        const outputInput = h('input', {
+          type: 'text',
+          class: 'mono',
+          placeholder: item.missing ? '' : basename(ctrl.outputPathFor(item.file)),
+          value: entry?.output ?? '',
+          disabled: item.missing,
+          title: '出力ファイル名（空欄 = <名前><接尾辞>.pdf）',
+          style: { width: '180px' },
+          on: {
+            change: () => {
+              const name = outputInput.value.trim();
+              void commit((cfg) => setFileOverrides(cfg, item.file, { output: name || undefined }), { action: 'output', file: item.file, output: name || undefined });
+            },
+          },
+        });
         const skipInput = h('input', {
           type: 'checkbox',
           checked: item.skipped,
@@ -301,6 +316,7 @@ export const sequenceSection: Section = {
           h('td', { class: 'mono muted' }, String(idx + 1)),
           h('td', null, h('span', { class: 'row', style: 'gap:2px;flex-wrap:nowrap' }, upBtn, downBtn)),
           h('td', null, h('span', { class: item.missing ? 'muted' : '' }, basename(item.file))),
+          h('td', null, outputInput),
           h('td', { class: 'mono' }, item.pageCount === undefined ? '—' : String(item.pageCount)),
           h('td', null, pinInput),
           h('td', null, skipInput),
@@ -316,7 +332,7 @@ export const sequenceSection: Section = {
           h(
             'table',
             null,
-            h('thead', null, h('tr', null, ['#', '', 'ファイル', 'ページ数', '開始番号', '除外', '通し番号', ''].map((t) => h('th', null, t)))),
+            h('thead', null, h('tr', null, ['#', '', '元ファイル', '出力ファイル名', 'ページ数', '開始番号', '除外', '通し番号', ''].map((t) => h('th', null, t)))),
             h('tbody', null, rows),
           ),
         ),

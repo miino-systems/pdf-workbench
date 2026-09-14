@@ -14,7 +14,7 @@ function clone(config: SequenceConfig): SequenceConfig {
 }
 
 function hasOverrides(entry: SequenceEntry): boolean {
-  return entry.startPage !== undefined || entry.skip === true;
+  return entry.startPage !== undefined || entry.skip === true || entry.output !== undefined;
 }
 
 function entriesInOrder(config: SequenceConfig, files: readonly string[], keepMissing: boolean): SequenceEntry[] {
@@ -62,7 +62,7 @@ export function moveFile(config: SequenceConfig, files: readonly string[], file:
 }
 
 /**
- * Set / clear the per-file overrides. In `name` mode an entry that ends up
+ * Set / clear the per-file overrides (start pin, skip, output name). In `name` mode an entry that ends up
  * with no overrides is removed (the entry list then stays empty for the
  * common "just number everything by name" case); in `manual` mode the
  * entry is kept because it also carries the position.
@@ -70,7 +70,7 @@ export function moveFile(config: SequenceConfig, files: readonly string[], file:
 export function setFileOverrides(
   config: SequenceConfig,
   file: string,
-  patch: { startPage?: number | undefined; skip?: boolean },
+  patch: { startPage?: number | undefined; skip?: boolean; output?: string | undefined },
 ): SequenceConfig {
   const next = clone(config);
   let entry = next.entries.find((e) => e.file === file);
@@ -86,6 +86,11 @@ export function setFileOverrides(
   if ('skip' in patch) {
     if (patch.skip) entry.skip = true;
     else delete entry.skip;
+  }
+  if ('output' in patch) {
+    const name = patch.output?.trim();
+    if (name) entry.output = name;
+    else delete entry.output;
   }
   if (next.order === 'name' && !hasOverrides(entry)) {
     next.entries = next.entries.filter((e) => e !== entry);

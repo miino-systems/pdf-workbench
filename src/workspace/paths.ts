@@ -44,8 +44,23 @@ export function stripExtension(path: string): string {
 /**
  * Compute the output path for a source PDF under `papers/`, e.g.
  * `papers/report.pdf` -> `output/report_stamped.pdf` (suffix from config).
+ * With `outputName` (a per-file override from `sequence.json`) the result
+ * is `output/<outputName>` with `.pdf` appended when missing; the name is
+ * always resolved *inside* the output directory (`..` segments are dropped).
  */
-export function outputPathFor(sourcePath: string, config: WorkspaceConfig): string {
+export function outputPathFor(sourcePath: string, config: WorkspaceConfig, outputName?: string): string {
+  const custom = outputName?.trim();
+  if (custom) {
+    const cleaned = custom
+      .replace(/\\/g, '/')
+      .split('/')
+      .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
+      .join('/');
+    if (cleaned) {
+      const withExt = /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`;
+      return joinPath(config.directories.output, withExt);
+    }
+  }
   const base = basename(stripExtension(sourcePath));
   return joinPath(config.directories.output, `${base}${config.output.suffix}.pdf`);
 }

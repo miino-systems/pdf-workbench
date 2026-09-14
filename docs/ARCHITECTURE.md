@@ -58,7 +58,7 @@ type PageSelector = all | first | last | range | list | odd | even
 interface StampPosition { anchor: StampAnchor; offsetX: pt; offsetY: pt }  // UI では mm 表示可
 type FontRef = standard | local (queryLocalFonts) | workspace (fonts/*.ttf) | file (user pick)   // + sha256
 interface JobRecord { source; sourceHash: 'sha256:…'; output; stampInstances; fonts; pageStart?; pageEnd?; status }
-interface SequenceConfig { order: 'name' | 'manual'; firstPage; startOn: 'any' | 'odd' | 'even'; entries: { file; startPage?; skip? }[] }
+interface SequenceConfig { order: 'name' | 'manual'; firstPage; startOn: 'any' | 'odd' | 'even'; entries: { file; startPage?; skip?; output? }[] }
 interface HistoryEvent { ts; type; prevHash?; hash?; …payload }
 interface PreflightConfig / PreflightReport
 ```
@@ -200,9 +200,10 @@ naturalCompare / compareFileNames                           // Intl.Collator('en
 sequenceItemFor(resolved, file); describeRange(item)        // 'p.21–28' / '除外' / '—'
 materializeOrder / useNameOrder / moveFile / setFileOverrides / removeMissingEntries / removeEntry   // pure, 新しい config を返す
 normalizeSequenceConfig(json: unknown): { config; problems[] }   // 欠けたキーは既定値, 不正な entry は除外 (loadWorkspace / import で使用)
-importSequenceText(text, { papersDir; files? }): { config; format: 'list' | 'json'; warnings }   // 1 行 1 ファイル名 (末尾 数字/skip) or sequence.json
+importSequenceText(text, { papersDir; files? }): { config; format: 'csv' | 'json'; warnings }    // CSV: source,output[,start_page|skip] (ヘッダ任意) or sequence.json
+parseCsv(text, ',' | '\t'): string[][]                      // RFC 4180
 pageRangeRows(resolved, { outputFor? }): PageRangeRow[]     // { filename; path; output?; page_start?; page_end?; page_count?; skipped }
-formatPageRangesTable(rows, ',' | '\t'); formatPageRangesJson(rows, { generatedAt; firstPage; lastPage? })
+formatPageRangesTable(rows, ',' | '\t'); formatPageRangesJson(rows, { generatedAt; firstPage; lastPage? })   // filename,output,page_start,page_end,page_count
 ```
 番号付け規則: `skip` → 番号なし（cursor 不変）。`startPage` → その値から（`startOn` の揃えは適用しない）。それ以外は cursor を `startOn` で揃えて開始。
 cursor は `pageEnd + 1` へ進む。ページ数が取れないファイル以降は、次の `startPage` まで番号を確定しない。
@@ -248,7 +249,8 @@ class AppController { store: Store<AppState>; journal?: HistoryJournal; snapshot
 }
 generateStampedPdf(ctrl, sourcePath)   // state/generate.ts: FontResolver → applyStamps(pageNumberStart) → output/ 書き込み → jobs.json → pdf.generated
 exportPageRanges(ctrl)                 // state/pageRanges.ts: output/page-ranges.csv + .json → sequence.exported
-importSequenceFile(ctrl, file)         // state/sequenceImport.ts: ドロップされた一覧/JSON → sequence.json (manual) → sequence.updated
+importSequenceFile(ctrl, file)         // state/sequenceImport.ts: ドロップされた対応表 CSV / JSON → sequence.json (manual, output 名込み) → sequence.updated
+ctrl.outputPathFor(source)             // sequence.json の entries[].output があれば output/<output> (.pdf 補完), なければ <name><suffix>.pdf
 ```
 UI (`src/ui`) は vanilla TS。`Section.mount(root, ctrl)` が state 変更ごとの update 関数を返す。
 

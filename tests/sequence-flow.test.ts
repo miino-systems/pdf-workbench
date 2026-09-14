@@ -147,7 +147,10 @@ describe('continuous page numbering (sequence.json) end-to-end', () => {
     expect(res.csv).toBe('output/page-ranges.csv');
     expect(res.json).toBe('output/page-ranges.json');
     expect(await ws.fs.readText('output/page-ranges.csv')).toBe(
-      'filename,page_start,page_end,page_count\n' + 'paper1.pdf,1,2,2\n' + 'paper2.pdf,3,5,3\n' + 'paper10.pdf,,,1\n',
+      'filename,output,page_start,page_end,page_count\n' +
+        'paper1.pdf,paper1_stamped.pdf,1,2,2\n' +
+        'paper2.pdf,paper2_stamped.pdf,3,5,3\n' +
+        'paper10.pdf,paper10_stamped.pdf,,,1\n',
     );
     const json = JSON.parse(await ws.fs.readText('output/page-ranges.json'));
     expect(json.firstPage).toBe(1);

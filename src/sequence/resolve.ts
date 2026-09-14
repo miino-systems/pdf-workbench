@@ -178,6 +178,17 @@ export function resolveSequence(config: SequenceConfig, files: readonly Sequence
     numberedPages += info.pageCount;
   });
 
+  // Two files must not be stamped into the same output file.
+  const byOutput = new Map<string, string[]>();
+  for (const item of items) {
+    const out = item.missing ? undefined : entryFor(config, item.file)?.output?.trim().toLowerCase();
+    if (!out) continue;
+    byOutput.set(out, [...(byOutput.get(out) ?? []), item.file]);
+  }
+  for (const [out, owners] of byOutput) {
+    if (owners.length > 1) warnings.push(`出力ファイル名 ${out} が重複しています: ${owners.join(', ')}`);
+  }
+
   return { items, lastPage, numberedPages, warnings };
 }
 

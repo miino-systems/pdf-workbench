@@ -84,11 +84,30 @@ export async function listLocalFonts(): Promise<LocalFontInfo[]> {
 }
 
 /**
- * Read the raw bytes of a previously-listed local font by its
- * `postscriptName`. Call {@link listLocalFonts} first to populate the cache.
+ * Read the raw bytes of a local font by its `postscriptName`.
+ *
+ * Normally the font was already listed via {@link listLocalFonts} (which
+ * populates the cache), but after a page reload `stamps.json` can reference
+ * a `local` `FontRef` before the user has re-listed local fonts this
+ * session (the permission grant persists across reloads, `queryLocalFonts`
+ * results do not get cached anywhere but here). In that case, fall back to
+ * a targeted `queryLocalFonts({ postscriptNames: [postscriptName] })` call
+ * instead of throwing — this only re-prompts for permission if it was
+ * actually revoked, and otherwise resolves silently.
  */
 export async function readLocalFontBytes(postscriptName: string): Promise<Uint8Array> {
-  const fontData = fontDataCache.get(postscriptName);
+  let fontData = fontDataCache.get(postscriptName);
+  if (!fontData) {
+    const queryLocalFonts = getWindowLocalFonts();
+    if (!queryLocalFonts) {
+      throw new Error(
+        `Local font "${postscriptName}" was not found; call listLocalFonts() first to grant access`,
+      );
+    }
+    const found = await queryLocalFonts({ postscriptNames: [postscriptName] }).catch(() => []);
+    fontData = found[0];
+    if (fontData) fontDataCache.set(postscriptName, fontData);
+  }
   if (!fontData) {
     throw new Error(
       `Local font "${postscriptName}" was not found; call listLocalFonts() first to grant access`,

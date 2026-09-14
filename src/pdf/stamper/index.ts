@@ -20,3 +20,10 @@ export {
   type MeasureContext,
 } from './measure';
 export { layoutTextBlock, DEFAULT_LINE_HEIGHT_FACTOR, type TextBlockLayout } from './sanitize';
+export {
+  normalizeAngle,
+  visiblePageSize,
+  toContentPoint,
+  toVisiblePoint,
+  type PageAngle,
+} from './rotation';

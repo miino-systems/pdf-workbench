@@ -1,7 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FontResolver, fontWarningMessage, withHash } from '@/fonts';
+import { readLocalFontBytes } from '@/fonts/local';
 import { sha256 } from '@/fonts/hash';
 import type { FontRef } from '@/core/types';
 
@@ -110,5 +111,41 @@ describe('FontResolver local refs', () => {
     await expect(
       resolver.resolve({ kind: 'local', family: 'Foo', postscriptName: 'Foo-Regular' }),
     ).rejects.toThrow(/Foo-Regular/);
+  });
+});
+
+describe('readLocalFontBytes', () => {
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window;
+  });
+
+  it('falls back to a targeted queryLocalFonts() lookup when the cache is empty (e.g. after a page reload)', async () => {
+    // Simulate a page reload: `listLocalFonts()` was never called this
+    // session (so the module-level cache is empty), but stamps.json still
+    // references a `local` FontRef and the browser's permission grant is
+    // still in effect.
+    const bytes = await loadFixtureBytes();
+    const blob = { arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
+    let queried: { postscriptNames?: string[] } | undefined;
+    (globalThis as unknown as { window: unknown }).window = {
+      queryLocalFonts: async (opts?: { postscriptNames?: string[] }) => {
+        queried = opts;
+        if (opts?.postscriptNames?.includes('Foo-Regular')) {
+          return [{ family: 'Foo', fullName: 'Foo Regular', postscriptName: 'Foo-Regular', style: 'Regular', blob: async () => blob }];
+        }
+        return [];
+      },
+    };
+
+    const result = await readLocalFontBytes('Foo-Regular');
+    expect(queried).toEqual({ postscriptNames: ['Foo-Regular'] });
+    expect(result.length).toBe(bytes.length);
+  });
+
+  it('still throws a clear error when the font truly cannot be found', async () => {
+    (globalThis as unknown as { window: unknown }).window = {
+      queryLocalFonts: async () => [],
+    };
+    await expect(readLocalFontBytes('Nope-Regular')).rejects.toThrow(/Nope-Regular/);
   });
 });

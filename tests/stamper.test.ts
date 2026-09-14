@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { PDFDict, PDFDocument, PDFName, PDFString } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFRawStream, PDFString, decodePDFRawStream, degrees } from 'pdf-lib';
 import { applyStamps } from '@/pdf/stamper';
 import { FontResolver } from '@/fonts';
 import { sha256 } from '@/fonts/hash';
@@ -340,6 +340,77 @@ describe('applyStamps', () => {
 
     expect(result.applied).toEqual([]);
     expect(result.warnings.some((w) => w.includes('unknown stampId'))).toBe(true);
+  });
+
+  it('places a stamp correctly (in the *visible* frame) on a page with /Rotate 90, without crashing', async () => {
+    // Regression: the content<->visible coordinate remapping for rotated
+    // pages had its 90°/270° branches swapped, silently mis-placing every
+    // stamp on a rotated page (though never crashing).
+    const rawWidth = 200;
+    const rawHeight = 100;
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([rawWidth, rawHeight]);
+    page.setRotation(degrees(90));
+    const sourceBytes = await doc.save();
+
+    const boxWidth = 20;
+    const boxHeight = 8;
+    const offsetX = 10;
+    const offsetY = 5;
+    const definitions: StampDefinition[] = [
+      {
+        id: 'img',
+        name: 'img',
+        layers: [{ id: 'l', type: 'image', src: 'assets/logo.png', width: boxWidth, height: boxHeight }],
+        defaultPosition: { anchor: 'bottom-right', offsetX, offsetY },
+      },
+    ];
+    const instances: StampInstance[] = [
+      { id: 'inst', stampId: 'img', enabled: true, pages: { kind: 'all' } },
+    ];
+
+    const result = await applyStamps({
+      sourceBytes,
+      definitions,
+      instances,
+      resolveFont: async (ref) => ({ ref, hashMismatch: false }),
+      resolveImage: async () => tinyPngBytes(),
+    });
+    expect(result.warnings).toEqual([]);
+
+    const output = await PDFDocument.load(result.bytes);
+    const outPage = output.getPage(0);
+    // The page's own /Rotate is untouched by stamping.
+    expect(outPage.getRotation().angle).toBe(90);
+
+    // pdf-lib's `drawImage` emits separate `cm` operators for translate,
+    // rotate and scale (in that order); the *translate* one — recognisable
+    // by its identity linear part `1 0 0 1 tx ty cm` — is where pdf-lib
+    // placed the image's origin in *content* space.
+    const contentsArr = outPage.node.Contents();
+    if (!(contentsArr instanceof PDFArray)) throw new Error('expected page Contents to be an array of streams');
+    let text = '';
+    for (let i = 0; i < contentsArr.size(); i++) {
+      const stream = contentsArr.lookup(i, PDFRawStream);
+      text += new TextDecoder().decode(decodePDFRawStream(stream).decode());
+    }
+    const m = text.match(/1 0 0 1 (-?[\d.]+) (-?[\d.]+) cm/);
+    expect(m).toBeTruthy();
+    const contentX = parseFloat(m![1]);
+    const contentY = parseFloat(m![2]);
+
+    // Map content space -> visible (as-displayed) space using the known-correct
+    // forward transform for angle=90 (independently re-derived here, not
+    // imported from the module under test): visible.x = content.y,
+    // visible.y = raw.width - content.x.
+    const visibleX = contentY;
+    const visibleY = rawWidth - contentX;
+
+    // Expected bottom-left of the stamp box in the *visible* frame for a
+    // bottom-right anchor on the rotated (100 x 200) visible page.
+    const visiblePageWidth = rawHeight; // page displays landscape-swapped
+    expect(visibleX).toBeCloseTo(visiblePageWidth - offsetX - boxWidth, 5);
+    expect(visibleY).toBeCloseTo(offsetY, 5);
   });
 
   it('skips disabled instances entirely', async () => {

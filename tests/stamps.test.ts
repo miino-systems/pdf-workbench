@@ -5,12 +5,14 @@ import {
   createInstanceFromDefinition,
   describePageSelector,
   effectivePosition,
+  invertStampOrigin,
   parsePageList,
   renderPageNumber,
   resolvePages,
   resolveStampOrigin,
   validateStampsConfig,
 } from '@/stamps';
+import { STAMP_ANCHORS } from '@/core/types';
 import type { PageSelector, StampAnchor, StampDefinition, StampInstance, StampsConfig } from '@/core/types';
 
 describe('resolvePages', () => {
@@ -115,6 +117,38 @@ describe('resolveStampOrigin', () => {
       expect(origin.y).toBeCloseTo(expected.y);
     });
   }
+});
+
+describe('invertStampOrigin', () => {
+  it('is the exact inverse of resolveStampOrigin for every anchor, for random pages/boxes/offsets', () => {
+    // Deterministic LCG so a failure is reproducible without a fixed fixture.
+    let seed = 7;
+    const rand = (min: number, max: number): number => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return min + (seed / 0x7fffffff) * (max - min);
+    };
+
+    for (const anchor of STAMP_ANCHORS) {
+      for (let i = 0; i < 30; i++) {
+        const page = { width: rand(50, 1000), height: rand(50, 1000) };
+        const box = { width: rand(1, page.width), height: rand(1, page.height) };
+        const offsetX = rand(-200, 200);
+        const offsetY = rand(-200, 200);
+        const position = { anchor, offsetX, offsetY };
+
+        const origin = resolveStampOrigin(position, page, box);
+        const inverted = invertStampOrigin(origin, anchor, page, box);
+        expect(inverted.offsetX).toBeCloseTo(offsetX, 9);
+        expect(inverted.offsetY).toBeCloseTo(offsetY, 9);
+
+        // And round-tripping through resolveStampOrigin again reproduces
+        // the same origin (the property `pdf.ts`'s drag handler relies on).
+        const roundTripped = resolveStampOrigin({ anchor, ...inverted }, page, box);
+        expect(roundTripped.x).toBeCloseTo(origin.x, 9);
+        expect(roundTripped.y).toBeCloseTo(origin.y, 9);
+      }
+    }
+  });
 });
 
 describe('effectivePosition', () => {

@@ -88,6 +88,16 @@ export class AppController {
   readonly store: Store<AppState>;
   journal?: HistoryJournal;
   snapshots?: SnapshotStore;
+  /**
+   * Bumped every time the active workspace changes (opened/closed/switched).
+   * Async work started against one workspace (e.g. `hashFile`) captures the
+   * epoch at the start and checks it before committing state, so results
+   * that resolve after the workspace has since changed are dropped instead
+   * of corrupting the new workspace's file list.
+   */
+  private wsEpoch = 0;
+  /** Bumped on every `selectFile` call so an earlier, still in-flight call doesn't clobber a later one. */
+  private selectSeq = 0;
 
   constructor() {
     this.store = new Store<AppState>({
@@ -207,6 +217,7 @@ export class AppController {
   }
 
   private async loadInto(handle: FileSystemDirectoryHandle, fs: WorkspaceFS, justInitialized: boolean): Promise<void> {
+    this.wsEpoch += 1;
     const workspace = await loadWorkspace(fs);
     this.journal = new HistoryJournal(fs, { hashChain: workspace.config.history.hashChain });
     this.snapshots = new SnapshotStore(fs);
@@ -231,6 +242,7 @@ export class AppController {
   }
 
   closeWorkspace(): void {
+    this.wsEpoch += 1;
     this.journal = undefined;
     this.snapshots = undefined;
     this.store.set({
@@ -275,9 +287,15 @@ export class AppController {
   private async hashFile(path: string): Promise<string | undefined> {
     const ws = this.state.workspace;
     if (!ws) return undefined;
+    const epoch = this.wsEpoch;
     try {
       const bytes = await ws.fs.readBytes(path);
       const hash = await sha256(bytes);
+      // The workspace may have been closed or switched to a different one
+      // while `readBytes`/`sha256` were in flight — a *different* workspace
+      // can easily contain a file at this same relative path, so applying
+      // this result unconditionally could attach the wrong hash to it.
+      if (epoch !== this.wsEpoch) return undefined;
       this.store.set((s) => ({
         files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: computeStatus(f.job, hash) } : f)),
       }));
@@ -289,13 +307,20 @@ export class AppController {
 
   async selectFile(path: string | undefined): Promise<void> {
     const ws = this.requireWorkspace();
+    const epoch = this.wsEpoch;
     if (!path) {
+      this.selectSeq += 1;
       this.store.set({ selectedFile: undefined, selectedBytes: undefined, selectedSha256: undefined, pageCount: 0 });
       return;
     }
+    const seq = ++this.selectSeq;
     await this.run('PDF を読み込み', async () => {
       const bytes = await ws.fs.readBytes(path);
       const hash = await sha256(bytes);
+      // Superseded by a later `selectFile` call, or the workspace changed
+      // underneath us, while the read/hash were in flight: don't clobber
+      // whatever is now selected.
+      if (seq !== this.selectSeq || epoch !== this.wsEpoch) return;
       this.store.set((s) => ({
         selectedFile: path,
         selectedBytes: bytes,

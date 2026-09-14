@@ -86,3 +86,49 @@ export function stampRect(
   const { x, y } = resolveStampOrigin(position, page, box);
   return { x, y, width: box.width, height: box.height };
 }
+
+/**
+ * Inverse of {@link resolveStampOrigin}: given the bottom-left corner a
+ * stamp box now sits at (e.g. after the user dragged it in the UI) and the
+ * anchor it should keep, recover the `offsetX`/`offsetY` that reproduce that
+ * origin. Exact for all 9 anchors — `resolveStampOrigin(page, box,
+ * invertStampOrigin(...))` round-trips `origin`.
+ */
+export function invertStampOrigin(
+  origin: { x: number; y: number },
+  anchor: StampPosition['anchor'],
+  page: PageSize,
+  box: { width: number; height: number },
+): { offsetX: number; offsetY: number } {
+  const [vAnchor, hAnchor] = splitAnchor(anchor);
+
+  let offsetX: number;
+  switch (hAnchor) {
+    case 'left':
+      offsetX = origin.x;
+      break;
+    case 'right':
+      offsetX = page.width - box.width - origin.x;
+      break;
+    case 'center':
+    default:
+      offsetX = origin.x - (page.width - box.width) / 2;
+      break;
+  }
+
+  let offsetY: number;
+  switch (vAnchor) {
+    case 'top':
+      offsetY = page.height - box.height - origin.y;
+      break;
+    case 'bottom':
+      offsetY = origin.y;
+      break;
+    case 'middle':
+    default:
+      offsetY = origin.y - (page.height - box.height) / 2;
+      break;
+  }
+
+  return { offsetX, offsetY };
+}

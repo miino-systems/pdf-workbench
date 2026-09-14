@@ -12,7 +12,7 @@ import type { PageSize, StampPosition, StampsConfig } from '@/core/types';
 import { checkStampCollision } from '@/preflight';
 import { PdfRenderer, canvasToPdf, pdfToCanvas } from '@/pdf/renderer';
 import { estimateStampBox } from '@/pdf/stamper/measure';
-import { describePageSelector, effectivePosition, resolvePages, stampRect } from '@/stamps';
+import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
 import { STATUS_LABEL, type AppState, type PdfFileItem } from '@/state/app';
 import { generateStampedPdf } from '@/state/generate';
 import { basename } from '@/workspace';
@@ -285,29 +285,7 @@ export const pdfSection: Section = {
           const newTopY = topLeftPdf.y; // pdf-space y of the box's *top* edge
           const newY = newTopY - box.height; // bottom-left y (Rect convention)
 
-          const [vAnchor, hAnchor] = position.anchor.split('-') as [string, string];
-          let offsetX: number;
-          switch (hAnchor) {
-            case 'left':
-              offsetX = newX;
-              break;
-            case 'right':
-              offsetX = pageSize.width - newX - box.width;
-              break;
-            default: // center
-              offsetX = newX - (pageSize.width - box.width) / 2;
-          }
-          let offsetY: number;
-          switch (vAnchor) {
-            case 'top':
-              offsetY = pageSize.height - newY - box.height;
-              break;
-            case 'bottom':
-              offsetY = newY;
-              break;
-            default: // middle
-              offsetY = newY - (pageSize.height - box.height) / 2;
-          }
+          let { offsetX, offsetY } = invertStampOrigin({ x: newX, y: newY }, position.anchor, pageSize, box);
           offsetX = Math.round(offsetX * 2) / 2;
           offsetY = Math.round(offsetY * 2) / 2;
           void ctrl.setInstancePosition(instanceId, { anchor: position.anchor, offsetX, offsetY });

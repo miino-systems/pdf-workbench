@@ -5,6 +5,7 @@
 export { resolvePages, describePageSelector, parsePageList } from './pages';
 export {
   resolveStampOrigin,
+  invertStampOrigin,
   effectivePosition,
   stampRect,
   DEFAULT_STAMP_POSITION,

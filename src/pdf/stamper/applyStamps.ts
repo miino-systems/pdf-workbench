@@ -8,23 +8,17 @@
  */
 import fontkitModule from '@pdf-lib/fontkit';
 import { PDFDocument, PDFFont, PDFImage, PDFPage, degrees, rgb } from 'pdf-lib';
-import type { FontRef, ImageLayer, PageSize, ResolvedFont, StampLayer } from '@/core/types';
+import type { FontRef, ImageLayer, ResolvedFont, StampLayer } from '@/core/types';
 import { effectivePosition, renderPageNumber, resolvePages, resolveStampOrigin } from '@/stamps';
 import { parseHexColor } from '@/stamps/color';
 import { toPdfLibStandardFont } from '@/fonts/standard';
 import { fontMetricsKey, unionLayerBoxes, type LayerBox } from './measure';
+import { normalizeAngle, toContentPoint, visiblePageSize } from './rotation';
 import { layoutTextBlock } from './sanitize';
 import type { StampJobInput, StampJobResult } from './types';
 
 /** `Fontkit` isn't part of pdf-lib's public API surface; recover its shape structurally. */
 type RegisterFontkitArg = Parameters<PDFDocument['registerFontkit']>[0];
-
-/** Normalise any rotation angle (incl. negative) to one of 0/90/180/270. */
-function normalizeAngle(angle: number): 0 | 90 | 180 | 270 {
-  const n = ((Math.round(angle / 90) * 90) % 360) + 360;
-  const m = n % 360;
-  return (m === 90 || m === 180 || m === 270 ? m : 0) as 0 | 90 | 180 | 270;
-}
 
 /**
  * pdf-lib's JPEG embedder reads `bytes.buffer` directly via `DataView`,
@@ -57,37 +51,6 @@ function describeFontRef(ref: FontRef): string {
     case 'file':
       return ref.family ?? ref.name;
   }
-}
-
-/**
- * Map a point given in the page's *visible* (as-displayed) coordinate frame
- * into the page's own content coordinate space (unaffected by `/Rotate`).
- * Exact for `angle === 0`; a reasonable best-effort approximation for
- * 90/180/270 — pdf-lib's `drawText`/`drawImage` operate in content space, so
- * a rotated page needs this remapping to look right when viewed rotated.
- * See docs/ARCHITECTURE.md `pdf/stamper` contract for the documented
- * limitation.
- */
-function toContentPoint(
-  visible: { x: number; y: number },
-  angle: 0 | 90 | 180 | 270,
-  raw: PageSize,
-): { x: number; y: number } {
-  switch (angle) {
-    case 0:
-      return visible;
-    case 90:
-      return { x: visible.y, y: raw.height - visible.x };
-    case 180:
-      return { x: raw.width - visible.x, y: raw.height - visible.y };
-    case 270:
-      return { x: raw.width - visible.y, y: visible.x };
-  }
-}
-
-/** The page size as it appears to a viewer once `/Rotate` is applied. */
-function visiblePageSize(raw: PageSize, angle: 0 | 90 | 180 | 270): PageSize {
-  return angle === 90 || angle === 270 ? { width: raw.height, height: raw.width } : raw;
 }
 
 interface DrawableLayer {
@@ -277,7 +240,12 @@ async function buildDrawableLayer(
           color: rgb(color.r, color.g, color.b),
           opacity: layer.opacity,
           lineHeight,
-          rotate: degrees((layer.rotate ?? 0) - pageAngle),
+          // `pageAngle` is how far the *page* rotates the content clockwise
+          // when displayed; the glyph must be rotated the opposite amount
+          // further (i.e. `+ pageAngle` in content space) so that, once the
+          // page's own rotation is applied, it appears rotated by exactly
+          // `layer.rotate` (CCW) to the viewer.
+          rotate: degrees((layer.rotate ?? 0) + pageAngle),
         });
       },
     };
@@ -304,7 +272,8 @@ async function buildDrawableLayer(
           width: box.width,
           height: box.height,
           opacity: layer.opacity,
-          rotate: degrees((layer.rotate ?? 0) - pageAngle),
+          // See the equivalent comment on the text layer's `draw` above.
+          rotate: degrees((layer.rotate ?? 0) + pageAngle),
         });
       },
     };

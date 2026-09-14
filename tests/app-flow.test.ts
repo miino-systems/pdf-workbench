@@ -179,4 +179,93 @@ describe('AppController end-to-end flow', () => {
     expect(await generateStampedPdf(ctrl, 'papers/a.pdf')).toBeUndefined();
     expect(await ws.fs.exists('output/a_stamped.pdf')).toBe(false);
   });
+
+  it('selectFile: a slow, earlier call does not clobber a later, faster selection (regression)', async () => {
+    const ctrl = await setupWorkspace(createMemoryDirectory('race-select'));
+    const ws = ctrl.requireWorkspace();
+    await ws.fs.writeBytes('papers/a.pdf', await buildFixturePdf([{ size: [595.28, 841.89] }]));
+    await ws.fs.writeBytes('papers/b.pdf', await buildFixturePdf([{ size: [420, 595] }]));
+    await ctrl.refreshFiles();
+
+    // Make reading papers/a.pdf hang until released, so its selectFile()
+    // call is still in flight when papers/b.pdf's completes.
+    const realReadBytes = ws.fs.readBytes.bind(ws.fs);
+    let releaseA!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    (ws.fs as { readBytes: typeof ws.fs.readBytes }).readBytes = async (p: string) => {
+      if (p === 'papers/a.pdf') await gate;
+      return realReadBytes(p);
+    };
+
+    const pendingA = ctrl.selectFile('papers/a.pdf');
+    await ctrl.selectFile('papers/b.pdf');
+    expect(ctrl.state.selectedFile).toBe('papers/b.pdf');
+
+    releaseA();
+    await pendingA;
+
+    // The stale, slower selectFile('a.pdf') resolving afterwards must not
+    // have overwritten the later, already-settled selection of b.pdf.
+    expect(ctrl.state.selectedFile).toBe('papers/b.pdf');
+  });
+
+  it("a workspace's in-flight lazy file hash does not leak into a different workspace opened afterwards (regression)", async () => {
+    const ctrl = new AppController();
+
+    // Workspace A: one processed file.
+    await ctrl.openHandle(createMemoryDirectory('wsA'));
+    await ctrl.initializePendingWorkspace();
+    const wsA = ctrl.requireWorkspace();
+    await wsA.fs.writeBytes('papers/a.pdf', await buildFixturePdf([{ size: [595.28, 841.89] }]));
+    const def: StampDefinition = {
+      id: 'd',
+      name: 'D',
+      layers: [{ id: 'l', type: 'text', text: 'x', font: { kind: 'standard', name: 'Helvetica' }, size: 10, color: '#000000' }],
+    };
+    await ctrl.updateStamps((cfg) => {
+      cfg.definitions = [def];
+      cfg.instances = [createInstanceFromDefinition(def)];
+    });
+    await ctrl.refreshFiles();
+    await generateStampedPdf(ctrl, 'papers/a.pdf');
+
+    // Make reading papers/a.pdf in workspace A hang, so the lazy hashFile()
+    // triggered below is still in flight when we switch workspaces.
+    const realReadBytes = wsA.fs.readBytes.bind(wsA.fs);
+    let releaseA!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    (wsA.fs as { readBytes: typeof wsA.fs.readBytes }).readBytes = async (p: string) => {
+      if (p === 'papers/a.pdf') await gate;
+      return realReadBytes(p);
+    };
+
+    // Simulate a fresh listing (as on reopen): no cached sha256, so
+    // refreshFiles() schedules an unawaited hashFile('papers/a.pdf').
+    ctrl.store.set({ files: [] });
+    await ctrl.refreshFiles();
+
+    // Switch to a completely different workspace that happens to have a
+    // file at the *same* relative path, with no job (not-processed).
+    await ctrl.openHandle(createMemoryDirectory('wsB'));
+    await ctrl.initializePendingWorkspace();
+    const wsB = ctrl.requireWorkspace();
+    await wsB.fs.writeBytes('papers/a.pdf', await buildFixturePdf([{ size: [420, 595] }]));
+    await ctrl.refreshFiles();
+    expect(ctrl.state.files[0].status).toBe('not-processed');
+
+    // Let workspace A's stale hash computation finish now.
+    releaseA();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Workspace B's file list must be unaffected by workspace A's
+    // now-irrelevant, stale hash result.
+    expect(ctrl.state.workspace).toBe(wsB);
+    expect(ctrl.state.files[0].path).toBe('papers/a.pdf');
+    expect(ctrl.state.files[0].status).toBe('not-processed');
+    expect(ctrl.state.files[0].sha256).toBeUndefined();
+  });
 });

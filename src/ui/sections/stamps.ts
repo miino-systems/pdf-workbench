@@ -66,12 +66,31 @@ const ANCHOR_LABELS: Record<StampAnchor, string> = {
 
 // ------------------------------------------------------------------ utils
 
-function debounce<Args extends unknown[]>(fn: (...args: Args) => void, ms: number): (...args: Args) => void {
+/** A debounced function that can also be flushed: run its pending call (if any) immediately. */
+type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { flush: () => void };
+
+function debounce<Args extends unknown[]>(fn: (...args: Args) => void, ms: number): Debounced<Args> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  return (...args: Args) => {
+  let pendingArgs: Args | undefined;
+  const debounced = ((...args: Args) => {
+    pendingArgs = args;
     if (timer !== undefined) clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), ms);
+    timer = setTimeout(() => {
+      timer = undefined;
+      const toRun = pendingArgs;
+      pendingArgs = undefined;
+      if (toRun) fn(...toRun);
+    }, ms);
+  }) as Debounced<Args>;
+  debounced.flush = () => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+    const toRun = pendingArgs;
+    pendingArgs = undefined;
+    if (toRun) fn(...toRun);
   };
+  return debounced;
 }
 
 function field(label: string, control: HTMLElement): HTMLElement {
@@ -637,6 +656,12 @@ export const stampsSection: Section = {
     let instDraftId: string | undefined;
     let instSavedJson: string | undefined;
 
+    // Pending debounced-save flushers for whichever definition/instance is
+    // currently being edited, so switching the selection (or the whole
+    // section unmounting) doesn't leave up to 400ms of typing unsaved.
+    let flushDefSave: (() => void) | undefined;
+    let flushInstSave: (() => void) | undefined;
+
     function findDef(id: string | undefined): StampDefinition | undefined {
       return id ? ctrl.state.workspace?.stamps.definitions.find((d) => d.id === id) : undefined;
     }
@@ -645,10 +670,12 @@ export const stampsSection: Section = {
     }
 
     function selectDef(id: string | undefined): void {
+      flushDefSave?.();
       selectedDefId = id;
       applyState(ctrl.state);
     }
     function selectInstance(id: string | undefined): void {
+      flushInstSave?.();
       selectedInstanceId = id;
       applyState(ctrl.state);
     }
@@ -760,6 +787,7 @@ export const stampsSection: Section = {
 
     function rebuildDefEditor(): void {
       if (!draft) {
+        flushDefSave = undefined;
         replaceChildren(
           defEditorPanel,
           h('h2', null, '定義エディタ'),
@@ -781,6 +809,7 @@ export const stampsSection: Section = {
         if (draftDefId === d.id) defStatus.textContent = '保存しました';
       }
       const debouncedSave = debounce(() => void doSave(), 400);
+      flushDefSave = debouncedSave.flush;
       function scheduleSave(): void {
         defStatus.textContent = '未保存の変更…';
         debouncedSave();
@@ -861,6 +890,7 @@ export const stampsSection: Section = {
     }
 
     function rebuildInstanceEditor(): void {
+      flushInstSave = undefined;
       const ws = ctrl.state.workspace;
       const inst = findInst(selectedInstanceId);
       if (!inst || !ws) {
@@ -892,6 +922,7 @@ export const stampsSection: Section = {
             instStatus.textContent = '保存しました';
           });
         }, 400);
+        flushInstSave = debouncedPosSave.flush;
         const posEditor = createPositionEditor(ctrl, inst.position, debouncedPosSave);
         positionBlock = h(
           'div',

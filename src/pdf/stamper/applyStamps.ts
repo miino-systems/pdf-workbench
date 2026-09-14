@@ -59,7 +59,7 @@ interface DrawableLayer {
 }
 
 export async function applyStamps(input: StampJobInput): Promise<StampJobResult> {
-  const { sourceBytes, definitions, instances, fileName, resolveFont, resolveImage } = input;
+  const { sourceBytes, definitions, instances, fileName, pageNumberStart, resolveFont, resolveImage } = input;
   const warnings: string[] = [];
 
   const pdfDoc = await PDFDocument.load(sourceBytes, {
@@ -151,6 +151,7 @@ export async function applyStamps(input: StampJobInput): Promise<StampJobResult>
           pages,
           pageCount,
           fileName,
+          pageNumberStart,
           getFont,
           getImage,
           warnings,
@@ -185,6 +186,7 @@ interface BuildLayerContext {
   pages: number[];
   pageCount: number;
   fileName?: string;
+  pageNumberStart?: number;
   getFont: (ref: FontRef) => Promise<{ font: PDFFont; resolved: ResolvedFont } | undefined>;
   getImage: (src: string) => Promise<PDFImage>;
   warnings: string[];
@@ -201,7 +203,10 @@ async function buildDrawableLayer(
     const text =
       layer.type === 'pageNumber'
         ? renderPageNumber(layer.template, {
-            page: ctx.pages.indexOf(ctx.pageNum) + (layer.startAt ?? 1),
+            page:
+              ctx.pageNumberStart !== undefined
+                ? ctx.pageNumberStart + (ctx.pageNum - 1)
+                : ctx.pages.indexOf(ctx.pageNum) + (layer.startAt ?? 1),
             pages: layer.totalPagesOverride ?? ctx.pageCount,
             file: ctx.fileName,
           })

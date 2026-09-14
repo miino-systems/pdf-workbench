@@ -26,6 +26,7 @@ export const WORKBENCH_FILES = {
   stamps: `${WORKBENCH_DIR}/stamps.json`,
   preflight: `${WORKBENCH_DIR}/preflight.json`,
   jobs: `${WORKBENCH_DIR}/jobs.json`,
+  sequence: `${WORKBENCH_DIR}/sequence.json`,
   events: `${WORKBENCH_DIR}/history/events.jsonl`,
   reportsDir: `${WORKBENCH_DIR}/reports`,
   historyDir: `${WORKBENCH_DIR}/history`,
@@ -237,7 +238,11 @@ export interface PageNumberLayer extends StampLayerBase {
   font: FontRef;
   size: number;
   color: string;
-  /** Number shown on the first *selected* page (default 1). */
+  /**
+   * Number shown on the first *selected* page (default 1). Ignored when the
+   * file is numbered by the workspace sequence (`sequence.json`), which
+   * supplies a document-level start instead.
+   */
   startAt?: number;
   /** When set, `{pages}` shows this instead of the document page count. */
   totalPagesOverride?: number;
@@ -277,6 +282,51 @@ export interface StampsConfig {
   version: number;
   definitions: StampDefinition[];
   instances: StampInstance[];
+}
+
+// ---------------------------------------------------------------------------
+// Sequence (continuous page numbering across source PDFs)
+// ---------------------------------------------------------------------------
+
+/**
+ * How the source PDFs are ordered for continuous numbering.
+ *  - `name`:   natural sort by file name (`paper2.pdf` < `paper10.pdf`);
+ *              `entries` only carry per-file overrides (startPage / skip).
+ *  - `manual`: the order of `entries`; files not listed are appended after
+ *              them in name order so a newly added PDF is never silently
+ *              dropped from the numbering.
+ */
+export type SequenceOrder = 'name' | 'manual';
+
+/**
+ * Alignment rule for the first page of every file: `odd` makes each file
+ * start on a recto (odd) page, as is customary for printed proceedings,
+ * by skipping a number where necessary. An explicit `startPage` pin is
+ * always respected as-is.
+ */
+export type SequenceStartOn = 'any' | 'odd' | 'even';
+
+export interface SequenceEntry {
+  /** Workspace-relative source path, e.g. `papers/paper001.pdf`. */
+  file: string;
+  /**
+   * Pin this file's first page number. Numbering continues from here for
+   * the files that follow (use it for gaps, restarts or externally
+   * numbered material).
+   */
+  startPage?: number;
+  /** Exclude the file from the continuous numbering (its page-number stamps fall back to `PageNumberLayer.startAt`). */
+  skip?: boolean;
+}
+
+/** `.pdf-workbench/sequence.json` */
+export interface SequenceConfig {
+  version: number;
+  order: SequenceOrder;
+  /** Page number of the first page of the first numbered file (default 1). */
+  firstPage: number;
+  startOn: SequenceStartOn;
+  entries: SequenceEntry[];
 }
 
 // ---------------------------------------------------------------------------
@@ -367,6 +417,14 @@ export interface JobRecord {
   stampInstances: string[];
   /** Fonts actually embedded (for reproducibility warnings). */
   fonts?: { ref: FontRef; sha256?: string }[];
+  /**
+   * Continuous page numbers this output was generated with (from
+   * `sequence.json`). Absent when the file was not part of the numbering
+   * (skipped, or generated before the sequence existed); a later change
+   * of the sequence is then not reported for it.
+   */
+  pageStart?: number;
+  pageEnd?: number;
   createdAt: string;
   status: JobStatus;
   message?: string;
@@ -399,6 +457,8 @@ export interface Snapshot {
   stamps: StampsConfig;
   preflight: PreflightConfig;
   jobs: JobsConfig;
+  /** Absent in snapshots taken before continuous numbering existed. */
+  sequence?: SequenceConfig;
 }
 
 // ---------------------------------------------------------------------------

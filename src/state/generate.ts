@@ -11,6 +11,7 @@ import { sha256 } from '@/crypto';
 import { FontResolver, fontWarningMessage, withHash } from '@/fonts';
 import { EVENT_TYPES } from '@/history';
 import { applyStamps } from '@/pdf/stamper';
+import { sequenceItemFor } from '@/sequence';
 import { createId } from '@/stamps';
 import { basename } from '@/workspace';
 import type { AppController } from './app';
@@ -47,6 +48,10 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
   const sourceBytes = await ws.fs.readBytes(sourcePath);
   const sourceHash = await sha256(sourceBytes);
   const outputPath = ctrl.outputPathFor(sourcePath);
+  // Continuous numbering: the file's first page number per sequence.json
+  // (undefined when the file is skipped or the chain could not be resolved).
+  const sequenceItem = sequenceItemFor(await ctrl.refreshSequence(), sourcePath);
+  const pageNumberStart = sequenceItem?.pageStart;
   const resolver = createFontResolver(ctrl);
   const resolvedFonts = new Map<string, ResolvedFont>();
   const warnings: string[] = [];
@@ -67,6 +72,7 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     definitions: ws.stamps.definitions,
     instances: enabled,
     fileName: basename(sourcePath),
+    pageNumberStart,
     resolveFont,
     resolveImage: (src) => ws.fs.readBytes(src),
   });
@@ -98,6 +104,8 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     outputHash,
     stampInstances: result.applied.map((a) => a.instanceId),
     fonts: result.fonts,
+    pageStart: pageNumberStart,
+    pageEnd: sequenceItem?.pageEnd,
     createdAt: new Date().toISOString(),
     status: warnings.length ? 'warning' : 'processed',
     message: warnings.length ? warnings.join('\n') : undefined,
@@ -110,6 +118,8 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     outputHash,
     stamps: job.stampInstances,
     pages: result.pageCount,
+    pageStart: job.pageStart,
+    pageEnd: job.pageEnd,
   });
   await ctrl.refreshFiles();
   return { output: outputPath, job, warnings };

@@ -144,6 +144,7 @@ describe('workspace initialisation and (re)loading', () => {
     expect(await fs.exists(WORKBENCH_FILES.stamps)).toBe(true);
     expect(await fs.exists(WORKBENCH_FILES.preflight)).toBe(true);
     expect(await fs.exists(WORKBENCH_FILES.jobs)).toBe(true);
+    expect(await fs.exists(WORKBENCH_FILES.sequence)).toBe(true);
     expect(await fs.exists(WORKBENCH_FILES.reportsDir)).toBe(true);
     expect(await fs.exists(WORKBENCH_FILES.snapshotsDir)).toBe(true);
     expect(await fs.exists(WORKBENCH_FILES.events)).toBe(true);
@@ -198,7 +199,17 @@ describe('workspace initialisation and (re)loading', () => {
     expect(loaded.stamps).toEqual(initial.stamps);
     expect(loaded.preflight).toEqual(initial.preflight);
     expect(loaded.jobs).toEqual(initial.jobs);
+    expect(loaded.sequence).toEqual(initial.sequence);
     expect(loaded.warnings).toEqual([]);
+  });
+
+  it('a missing sequence.json (pre-sequence workspace) falls back to defaults without a warning', async () => {
+    const fs = makeFs();
+    await initializeWorkspace(fs);
+    await fs.remove(WORKBENCH_FILES.sequence);
+    const state = await loadWorkspace(fs);
+    expect(state.warnings).toEqual([]);
+    expect(state.sequence).toEqual({ version: 1, order: 'name', firstPage: 1, startOn: 'any', entries: [] });
   });
 
   it('re-load restores a modified stamps config', async () => {

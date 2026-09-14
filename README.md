@@ -62,7 +62,8 @@ workspace/
 │   ├─ workspace.json   Workspace 設定
 │   ├─ stamps.json      StampDefinition / StampInstance
 │   ├─ preflight.json   preflight ルール
-│   ├─ jobs.json        処理ジョブ（source の SHA-256、output パス）
+│   ├─ jobs.json        処理ジョブ（source の SHA-256、output パス、通しページ範囲）
+│   ├─ sequence.json    通しページ番号の順序（並び順・先頭番号・ファイル別の固定/除外）
 │   ├─ reports/         preflight レポート (JSON)
 │   └─ history/
 │       ├─ events.jsonl 操作履歴（append-only, JSON Lines）
@@ -112,11 +113,46 @@ git push
 6. 操作は `.pdf-workbench/history/events.jsonl` に記録され、source の SHA-256 は `jobs.json` に保存されます。
    前回処理後に元 PDF が変更されると「⚠ 元 PDF が前回処理時から変更されています」と警告します。
 
+### 通しページ番号（Sequence タブ）
+
+複数の PDF（予稿集の各論文など）に **通し番号** を振るための仕組みです。
+`papers/` の PDF を並べた順にページ番号を割り当て、pageNumber スタンプの `{page}` は
+その番号（`page_start + 物理ページ − 1`）になります。設定は `.pdf-workbench/sequence.json` に保存されます。
+
+| 設定 | 意味 |
+|------|------|
+| 並び順 `order` | `name`: ファイル名の自然順（`paper2 < paper10`）。`manual`: 一覧の順（▲▼で並べ替え。未登録のファイルは名前順で末尾に追加） |
+| 最初のページ番号 `firstPage` | 先頭ファイルの 1 ページ目の番号（既定 1） |
+| 各ファイルの開始ページ `startOn` | `any` / `odd`（各論文を奇数＝右ページから始める。必要なら番号を 1 つ飛ばす） / `even` |
+| 開始番号（ファイル別） `startPage` | そのファイルの開始番号を固定。以降のファイルはそこから連番（飛び番・再開・外部で番号付けした資料の分を空ける用途） |
+| 除外（ファイル別） `skip` | 通し番号から外す。そのファイルのスタンプはスタンプ側の `startAt` を使う |
+
+```json
+{
+  "version": 1,
+  "order": "manual",
+  "firstPage": 1,
+  "startOn": "odd",
+  "entries": [
+    { "file": "papers/front-matter.pdf", "skip": true },
+    { "file": "papers/paper001.pdf" },
+    { "file": "papers/paper002.pdf", "startPage": 21 }
+  ]
+}
+```
+
+- 各ファイルの `page_start–page_end` は Sequence タブと PDF タブのファイル一覧に表示されます。
+- 「CSV / JSON を output/ に書き出す」で `output/page-ranges.csv`（`filename,page_start,page_end,page_count`）と
+  `output/page-ranges.json`（同じ行 + `path` / `output` / `skipped`）を出力します。目次や索引の生成に使えます。
+- 生成済みの PDF は、その後に順序が変わって開始番号がずれると「⚠ Page numbers changed」と表示されます（再生成してください）。
+- ページ数を読めない PDF があると、その位置から後ろの番号は確定しません（`startPage` で再開できます）。誤った番号を振るより安全側に倒しています。
+
 ## テスト
 
 ```
 npm test           # vitest: 元 PDF の SHA-256 不変, 別ファイル出力, hyperlink 維持, 日本語フォント embed,
-                   #         複数スタンプ, Workspace 再オープンでの設定復元, events.jsonl, ネットワーク API 不使用
+                   #         複数スタンプ, 通しページ番号 (sequence.json) と page-ranges 書き出し,
+                   #         Workspace 再オープンでの設定復元, events.jsonl, ネットワーク API 不使用
 node e2e/smoke.mjs # optional: Chromium で Workspace 初期化 → preview → Generate → preflight を通しで確認
 ```
 

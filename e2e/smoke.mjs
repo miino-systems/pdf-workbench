@@ -149,7 +149,7 @@ try {
   console.log('reports:', reports);
 
   // Other tabs render without errors.
-  for (const t of ['history', 'settings', 'workspace']) {
+  for (const t of ['sequence', 'history', 'settings', 'workspace']) {
     await page.click(`button[data-tab="${t}"]`);
     await page.waitForTimeout(300);
     await page.screenshot({ path: path.join(OUT, `${t}.png`), fullPage: true });

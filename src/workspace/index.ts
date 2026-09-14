@@ -17,6 +17,7 @@ export {
   createDefaultStampsConfig,
   createDefaultPreflightConfig,
   createDefaultJobsConfig,
+  createDefaultSequenceConfig,
   DEFAULT_GITIGNORE,
 } from './defaults';
 
@@ -28,6 +29,7 @@ export {
   saveStampsConfig,
   savePreflightConfig,
   saveJobsConfig,
+  saveSequenceConfig,
   saveAll,
 } from './store';
 export type { WorkspaceState } from './store';

@@ -84,3 +84,16 @@ export async function inspectPdf(bytes: Uint8Array): Promise<PdfInfo> {
     await destroyPdfDocument(doc);
   }
 }
+
+/**
+ * Page count only. PDF.js reads the xref lazily, so this is far cheaper
+ * than `inspectPdf` (no per-page work) — used to number many documents.
+ */
+export async function countPdfPages(bytes: Uint8Array): Promise<number> {
+  const doc = await loadPdfDocument(bytes);
+  try {
+    return doc.numPages;
+  } finally {
+    await destroyPdfDocument(doc);
+  }
+}

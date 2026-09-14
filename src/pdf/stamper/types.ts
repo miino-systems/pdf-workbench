@@ -14,6 +14,14 @@ export interface StampJobInput {
   instances: StampInstance[];
   /** Source file name/path, used for the `{file}` placeholder. */
   fileName?: string;
+  /**
+   * Document-level start of continuous numbering (e.g. this file's first
+   * page number in a multi-document sequence). When set, every page-number
+   * layer shows `pageNumberStart + (physicalPage - 1)` — independent of
+   * which pages the stamp is applied to — and `PageNumberLayer.startAt`
+   * is ignored.
+   */
+  pageNumberStart?: number;
   /** Resolves a font reference to bytes (or "standard, no bytes needed"). */
   resolveFont: (ref: FontRef) => Promise<ResolvedFont>;
   /** Resolves an `ImageLayer.src` (workspace-relative path) to PNG/JPEG bytes. */

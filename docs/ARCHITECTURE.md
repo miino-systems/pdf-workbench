@@ -136,9 +136,10 @@ listLocalFonts(): Promise<LocalFontInfo[]>                       // window.query
 listWorkspaceFonts(fs, dir): Promise<WorkspaceFileEntry[]>       // fonts/*.ttf|otf
 pickFontFile(): Promise<{ name; bytes }>                          // showOpenFilePicker / <input type=file> fallback
 class FontResolver {
-  constructor(ctx: { fs?: WorkspaceFS; fontsDir: string; pickedFiles?: Map<string, Uint8Array> })
+  constructor(ctx: { readWorkspaceFile?: (path) => Promise<Uint8Array>; pickedFiles?: Map<string, Uint8Array> })
   resolve(ref: FontRef): Promise<ResolvedFont>                    // computes sha256, sets hashMismatch
 }
+withHash(ref, resolved): FontRef                                  // sha256 を埋めた FontRef (保存用)
 fontWarningMessage(resolved): string | undefined                  // '同名フォントですが，以前使用したフォントと内容が異なります'
 ```
 
@@ -215,6 +216,18 @@ workspace/
 
 各 JSON は `version` フィールドを持つ。画像・フォント本体は JSON に埋め込まず、workspace 相対パスで参照する。
 
+### `state/` (UI と module の統合点)
+```ts
+class AppController { store: Store<AppState>; journal?: HistoryJournal; snapshots?: SnapshotStore
+  pickAndOpenWorkspace / openRecent / openHandle / initializePendingWorkspace / closeWorkspace
+  refreshFiles / selectFile / setPage                       // papers/*.pdf 一覧と jobs.json からの状態判定 (sha256 比較)
+  updateStamps / setInstanceEnabled / setInstancePosition / setInstancePages / addDefinition / ...   // stamps.json 保存 + events.jsonl
+  updateWorkspaceConfig / updatePreflightConfig / recordJob / saveSnapshot / saveReport / log
+}
+generateStampedPdf(ctrl, sourcePath)   // state/generate.ts: FontResolver → applyStamps → output/ 書き込み → jobs.json → pdf.generated
+```
+UI (`src/ui`) は vanilla TS。`Section.mount(root, ctrl)` が state 変更ごとの update 関数を返す。
+
 ## 5. Phase 1 実装計画
 
 | Step | 内容 | module |
@@ -231,3 +244,34 @@ workspace/
 | 15 | Git command copy UI | git-helper, ui |
 
 Phase 2 以降 (Local Font Access, workspace font, font sha256, snapshot, basic preflight, collision) は module 境界を今の段階で用意し、可能なものは同時に実装する。
+
+## 6. 実装状況
+
+| Phase | 項目 | 状態 |
+|-------|------|------|
+| 1 | 1–15 すべて | 実装済み (tests/app-flow.test.ts, tests/stamper.test.ts, e2e/smoke.mjs で検証) |
+| 2 | Local Font Access API / workspace font / font SHA-256 / stamp editor / snapshot / preflight basic / collision check | 実装済み (snapshot の「戻す」は未実装) |
+| 3 | PDF → PNG/JPEG | 実装済み (Settings タブ) |
+| 3 | raster margin check | 実装済み (preflight.json `checks.marginRaster`) |
+| 3 | history restore / advanced preflight | 未実装 (SnapshotStore.load は実装済み、UI は閲覧のみ) |
+| 3 | hash-chain audit log | 実装済み (workspace.json `history.hashChain`; History タブで検証) |
+
+## 7. テスト
+
+```
+npm test           # vitest (Node): 190+ tests
+npm run typecheck
+npm run build
+node e2e/smoke.mjs # optional: Chromium + OPFS で実ブラウザの一連の流れを確認 (要 Playwright)
+```
+
+| 要件 (§37) | テスト |
+|-----------|--------|
+| 元ファイルの SHA-256 が変化しない | tests/stamper.test.ts, tests/app-flow.test.ts, e2e/smoke.mjs |
+| output PDF が別ファイルとして生成される | tests/app-flow.test.ts (`output/<name>_stamped.pdf`) |
+| hyperlink が生成後も機能する | tests/stamper.test.ts (URI / GoTo annotation の数と値が一致), tests/app-flow.test.ts, e2e |
+| 日本語フォントを embed できる | tests/stamper.test.ts, tests/app-flow.test.ts (IPAGothic subset, `subset: true`) |
+| 複数スタンプを適用できる | tests/stamper.test.ts (text + pageNumber + image), tests/app-flow.test.ts |
+| Workspace を閉じて再度開いても設定が復元される | tests/workspace.test.ts, tests/app-flow.test.ts |
+| events.jsonl に操作履歴が残る | tests/history.test.ts, tests/app-flow.test.ts, e2e |
+| PDF が外部ネットワークへ送信されない | tests/no-network.test.ts (静的検査), e2e/smoke.mjs (全リクエストが同一 origin) |

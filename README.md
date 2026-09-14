@@ -112,6 +112,17 @@ git push
 6. 操作は `.pdf-workbench/history/events.jsonl` に記録され、source の SHA-256 は `jobs.json` に保存されます。
    前回処理後に元 PDF が変更されると「⚠ 元 PDF が前回処理時から変更されています」と警告します。
 
+## テスト
+
+```
+npm test           # vitest: 元 PDF の SHA-256 不変, 別ファイル出力, hyperlink 維持, 日本語フォント embed,
+                   #         複数スタンプ, Workspace 再オープンでの設定復元, events.jsonl, ネットワーク API 不使用
+node e2e/smoke.mjs # optional: Chromium で Workspace 初期化 → preview → Generate → preflight を通しで確認
+```
+
+`e2e/smoke.mjs` は Playwright と Chromium が必要です（`PLAYWRIGHT_PKG` / `CHROMIUM_PATH` を指定）。
+Workspace には OPFS (`navigator.storage.getDirectory()`) を使い，外部リクエストが 0 件であることも検査します。
+
 ## Development
 
 ```

@@ -14,9 +14,10 @@ export default defineConfig({
     // Everything is bundled locally: no CDN, no runtime fetch of user data.
     rollupOptions: {
       output: {
-        manualChunks: {
-          pdfjs: ['pdfjs-dist'],
-          pdflib: ['pdf-lib', '@pdf-lib/fontkit'],
+        manualChunks(id: string) {
+          if (id.includes('node_modules/pdfjs-dist')) return 'pdfjs';
+          if (id.includes('node_modules/pdf-lib') || id.includes('node_modules/@pdf-lib')) return 'pdflib';
+          return undefined;
         },
       },
     },

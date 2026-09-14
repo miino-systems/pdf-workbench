@@ -137,6 +137,13 @@ describe('resolveSequence', () => {
     expect(seq.lastPage).toBe(40);
   });
 
+  it('warns when two files map to the same output name', () => {
+    const c = cfg({ entries: [{ file: 'papers/paper1.pdf', output: 'A.pdf' }, { file: 'papers/paper2.pdf', output: 'a.PDF' }] });
+    const seq = resolveSequence(c, FILES);
+    expect(seq.warnings).toEqual(['出力ファイル名 a.pdf が重複しています: papers/paper1.pdf, papers/paper2.pdf']);
+    expect(ranges(seq)).toEqual({ 'paper1.pdf': '1-2', 'paper2.pdf': '3-5', 'paper10.pdf': '6-6' });
+  });
+
   it('an empty PDF gets no range and does not advance the cursor', () => {
     const seq = resolveSequence(cfg(), [
       { path: 'papers/a.pdf', pageCount: 0 },
@@ -197,7 +204,9 @@ describe('editing helpers (pure)', () => {
     expect(c.entries).toEqual([{ file: 'papers/paper2.pdf', startPage: 7 }]);
     c = setFileOverrides(c, 'papers/paper2.pdf', { skip: true });
     expect(c.entries).toEqual([{ file: 'papers/paper2.pdf', startPage: 7, skip: true }]);
-    c = setFileOverrides(c, 'papers/paper2.pdf', { startPage: undefined, skip: false });
+    c = setFileOverrides(c, 'papers/paper2.pdf', { output: ' NOLTA-02.pdf ' });
+    expect(c.entries).toEqual([{ file: 'papers/paper2.pdf', startPage: 7, skip: true, output: 'NOLTA-02.pdf' }]);
+    c = setFileOverrides(c, 'papers/paper2.pdf', { startPage: undefined, skip: false, output: '' });
     expect(c.entries).toEqual([]);
     // invalid pins are treated as "clear"
     expect(setFileOverrides(cfg(), 'papers/x.pdf', { startPage: 0 }).entries).toEqual([]);
@@ -226,9 +235,12 @@ describe('page range export', () => {
       { filename: 'paper10.pdf', path: 'papers/paper10.pdf', output: 'paper10_stamped.pdf', page_start: 4, page_end: 4, page_count: 1, skipped: false },
     ]);
     expect(formatPageRangesTable(rows)).toBe(
-      'filename,page_start,page_end,page_count\n' + 'paper1.pdf,,,2\n' + 'paper2.pdf,1,3,3\n' + 'paper10.pdf,4,4,1\n',
+      'filename,output,page_start,page_end,page_count\n' +
+        'paper1.pdf,paper1_stamped.pdf,,,2\n' +
+        'paper2.pdf,paper2_stamped.pdf,1,3,3\n' +
+        'paper10.pdf,paper10_stamped.pdf,4,4,1\n',
     );
-    expect(formatPageRangesTable(rows, '\t').split('\n')[1]).toBe('paper1.pdf\t\t\t2');
+    expect(formatPageRangesTable(rows, '\t').split('\n')[1]).toBe('paper1.pdf\tpaper1_stamped.pdf\t\t\t2');
   });
 
   it('quotes CSV fields containing the delimiter or quotes (RFC 4180)', () => {
@@ -240,13 +252,13 @@ describe('page range export', () => {
       ]),
     );
     const csv = formatPageRangesTable(rows);
-    expect(csv).toContain('"a, ""b"".pdf",1,1,1\n');
-    expect(csv).toContain('"c,d.pdf",2,2,1\n');
-    expect(csv).toContain('plain.pdf,3,3,1\n');
+    expect(csv).toContain('"a, ""b"".pdf",,1,1,1\n');
+    expect(csv).toContain('"c,d.pdf",,2,2,1\n');
+    expect(csv).toContain('plain.pdf,,3,3,1\n');
     // A comma is not special in TSV output (a double quote still is).
     const tsv = formatPageRangesTable(rows, '\t');
-    expect(tsv).toContain('c,d.pdf\t2\t2\t1\n');
-    expect(tsv).toContain('"a, ""b"".pdf"\t1\t1\t1\n');
+    expect(tsv).toContain('c,d.pdf\t\t2\t2\t1\n');
+    expect(tsv).toContain('"a, ""b"".pdf"\t\t1\t1\t1\n');
   });
 
   it('JSON export carries the rows plus header metadata', () => {

@@ -102,6 +102,15 @@ describe('workspace/paths', () => {
     expect(dirname('c.pdf')).toBe('');
   });
 
+  it('outputPathFor honours a per-file output name, appends .pdf and stays inside the output dir', () => {
+    const config = createDefaultWorkspaceConfigForTest();
+    expect(outputPathFor('papers/report.pdf', config, 'NOLTA-01.pdf')).toBe('output/NOLTA-01.pdf');
+    expect(outputPathFor('papers/report.pdf', config, 'NOLTA-01')).toBe('output/NOLTA-01.pdf');
+    expect(outputPathFor('papers/report.pdf', config, 'sub/NOLTA-01.PDF')).toBe('output/sub/NOLTA-01.PDF');
+    expect(outputPathFor('papers/report.pdf', config, '../papers/report.pdf')).toBe('output/papers/report.pdf');
+    expect(outputPathFor('papers/report.pdf', config, '   ')).toBe('output/report_stamped.pdf');
+  });
+
   it('outputPathFor builds <output dir>/<base><suffix>.pdf', () => {
     const config = createDefaultWorkspaceConfigForTest();
     expect(outputPathFor('papers/report.pdf', config)).toBe('output/report_stamped.pdf');

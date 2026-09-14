@@ -35,7 +35,8 @@ export {
 export { normalizeSequenceConfig, type NormalizedSequence } from './normalize';
 export {
   importSequenceText,
-  parseSequenceList,
+  parseSequenceCsv,
+  parseCsv,
   parseSequenceJson,
   type ImportSequenceOptions,
   type ImportedSequence,

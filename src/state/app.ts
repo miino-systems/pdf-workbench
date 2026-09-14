@@ -567,8 +567,11 @@ export class AppController {
     this.store.set({ workspace: { ...ws } });
   }
 
+  /** Output path for a source, honouring a per-file `output` name from `sequence.json`. */
   outputPathFor(sourcePath: string): string {
-    return outputPathFor(sourcePath, this.requireWorkspace().config);
+    const ws = this.requireWorkspace();
+    const entry = ws.sequence.entries.find((e) => e.file === sourcePath);
+    return outputPathFor(sourcePath, ws.config, entry?.output);
   }
 
   // ------------------------------------------------------------- history

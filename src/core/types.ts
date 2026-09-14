@@ -317,6 +317,12 @@ export interface SequenceEntry {
   startPage?: number;
   /** Exclude the file from the continuous numbering (its page-number stamps fall back to `PageNumberLayer.startAt`). */
   skip?: boolean;
+  /**
+   * Name of the stamped output file (inside the output directory), e.g.
+   * `NOLTA2026-A1-01.pdf`, overriding `<name><suffix>.pdf`. `.pdf` is
+   * appended when missing; sub-directories are allowed, `..` is not.
+   */
+  output?: string;
 }
 
 /** `.pdf-workbench/sequence.json` */

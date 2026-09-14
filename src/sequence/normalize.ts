@@ -48,8 +48,12 @@ export function normalizeSequenceConfig(input: unknown): NormalizedSequence {
         problems.push(`entries[${i}]: file がありません（無視）`);
         return;
       }
-      const obj = e as { file: string; startPage?: unknown; skip?: unknown };
+      const obj = e as { file: string; startPage?: unknown; skip?: unknown; output?: unknown };
       const entry: SequenceEntry = { file: obj.file.trim() };
+      if (obj.output !== undefined && obj.output !== null && obj.output !== '') {
+        if (typeof obj.output === 'string') entry.output = obj.output.trim();
+        else problems.push(`entries[${i}] (${entry.file}): output は文字列である必要があります（無視）`);
+      }
       if (obj.startPage !== undefined) {
         const n = positiveInt(obj.startPage);
         if (n === undefined) problems.push(`entries[${i}] (${entry.file}): startPage は 1 以上の整数である必要があります（無視）`);

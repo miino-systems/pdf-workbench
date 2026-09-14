@@ -126,6 +126,7 @@ git push
 | 各ファイルの開始ページ `startOn` | `any` / `odd`（各論文を奇数＝右ページから始める。必要なら番号を 1 つ飛ばす） / `even` |
 | 開始番号（ファイル別） `startPage` | そのファイルの開始番号を固定。以降のファイルはそこから連番（飛び番・再開・外部で番号付けした資料の分を空ける用途） |
 | 除外（ファイル別） `skip` | 通し番号から外す。そのファイルのスタンプはスタンプ側の `startAt` を使う |
+| 出力ファイル名（ファイル別） `output` | 生成 PDF の名前（`output/` 内）。省略時は `<名前><接尾辞>.pdf` |
 
 ```json
 {
@@ -136,27 +137,33 @@ git push
   "entries": [
     { "file": "papers/front-matter.pdf", "skip": true },
     { "file": "papers/paper001.pdf" },
-    { "file": "papers/paper002.pdf", "startPage": 21 }
+    { "file": "papers/paper002.pdf", "startPage": 21, "output": "NOLTA2026-A1-02.pdf" }
   ]
 }
 ```
 
-- 順序を外部で決める場合は、一覧ファイルを Sequence タブの「ファイル順の読み込み」にドロップします（`.txt` は 1 行 1 ファイル名。
-  末尾に数字を付けると開始番号の固定、`skip` で除外、`#` はコメント。`.json` は `sequence.json` 形式）。
-  読み込んだ内容で `sequence.json` を手動順として上書きします。ドロップしたファイル自体は保存しません。
+- 順序と出力ファイル名を外部（元の CSV を変形するスクリプトなど）で決める場合は、対応表 CSV を Sequence タブの
+  「ファイル順と出力名の読み込み」にドロップします。読み込んだ内容で `sequence.json` を手動順として上書きします。
+  ドロップしたファイル自体は保存しません。
 
   ```
-  # 予稿集の順序
-  front-matter.pdf skip
-  paper001.pdf
-  paper002.pdf
-  paper003.pdf 41
+  # 予稿集の順序: 元ファイル名, 出力ファイル名[, 開始番号 or skip]
+  front-matter.pdf,,skip
+  paper001.pdf,NOLTA2026-A1-01.pdf
+  paper002.pdf,NOLTA2026-A1-02.pdf
+  paper003.pdf,NOLTA2026-A2-01.pdf,41
   ```
+
+  - 先頭行に `source`（または `filename` / `file` / `input`）を含むヘッダがあれば列は任意の順で、`output` / `start_page` / `skip` 列を名前で読みます。
+    ヘッダが無ければ列は位置で `元ファイル名, 出力ファイル名, 開始番号または skip` です。区切りはコンマまたはタブ、引用符は RFC 4180 に従います。
+  - 出力ファイル名は `output/` 内のパスで、`.pdf` が無ければ補います。空欄なら既定の `<名前><接尾辞>.pdf` です。同じ出力名が重複すると警告します。
+  - 書き出した `output/page-ranges.csv` はそのまま再読み込みできます（ページ列は無視されます）。
+  - `.json`（`sequence.json` 形式。各エントリに `"output"` を書けます）もドロップできます。
 
 - スクリプトで `.pdf-workbench/sequence.json` を直接書いても構いません。`entries` だけ（`{"entries":[{"file":"papers/paper001.pdf"}, …]}`
   または `["papers/paper001.pdf", …]` でも可）あれば、残りのキーは既定値（`order: manual`, `firstPage: 1`, `startOn: any`）で補われます。
 - 各ファイルの `page_start–page_end` は Sequence タブと PDF タブのファイル一覧に表示されます。
-- 「CSV / JSON を output/ に書き出す」で `output/page-ranges.csv`（`filename,page_start,page_end,page_count`）と
+- 「CSV / JSON を output/ に書き出す」で `output/page-ranges.csv`（`filename,output,page_start,page_end,page_count`）と
   `output/page-ranges.json`（同じ行 + `path` / `output` / `skipped`）を出力します。目次や索引の生成に使えます。
 - 生成済みの PDF は、その後に順序が変わって開始番号がずれると「⚠ Page numbers changed」と表示されます（再生成してください）。
 - ページ数を読めない PDF があると、その位置から後ろの番号は確定しません（`startPage` で再開できます）。誤った番号を振るより安全側に倒しています。

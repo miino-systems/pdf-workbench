@@ -20,8 +20,8 @@ export interface PageRangeRow {
   skipped: boolean;
 }
 
-/** Column order of the CSV / TSV export. */
-export const PAGE_RANGE_COLUMNS = ['filename', 'page_start', 'page_end', 'page_count'] as const;
+/** Column order of the CSV / TSV export (`output` is empty when the caller cannot compute it). */
+export const PAGE_RANGE_COLUMNS = ['filename', 'output', 'page_start', 'page_end', 'page_count'] as const;
 
 function fileName(path: string): string {
   const idx = path.lastIndexOf('/');
@@ -56,8 +56,10 @@ function quoteField(value: string, delimiter: string): string {
 }
 
 /**
- * `filename,page_start,page_end,page_count` with a header line, `\n` line
- * endings and RFC 4180 quoting. Pass `'\t'` for a TSV (clipboard-friendly).
+ * `filename,output,page_start,page_end,page_count` with a header line, `\n`
+ * line endings and RFC 4180 quoting. Pass `'\t'` for a TSV
+ * (clipboard-friendly). The same file can be dropped back onto the Sequence
+ * tab: `filename`/`output` are read, the page columns are ignored.
  */
 export function formatPageRangesTable(rows: readonly PageRangeRow[], delimiter: ',' | '\t' = ','): string {
   const lines = [PAGE_RANGE_COLUMNS.join(delimiter)];

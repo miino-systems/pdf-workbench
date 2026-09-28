@@ -121,7 +121,19 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   ctrl.store.subscribe(render);
   render(ctrl.state, ctrl.state);
   document.addEventListener('keydown', (ev) => handleShortcut(ev, ctrl));
+
+  // Pick up .pdf-workbench/*.json edited in another program (an editor, a
+  // script, git checkout) before the stale in-memory copy can be saved over
+  // it: when the window regains focus, and every few seconds while visible.
+  const checkExternal = (): void => {
+    if (document.visibilityState === 'visible' && !ctrl.state.busy) void ctrl.checkExternalChanges();
+  };
+  window.addEventListener('focus', checkExternal);
+  document.addEventListener('visibilitychange', checkExternal);
+  setInterval(checkExternal, EXTERNAL_CHECK_INTERVAL_MS);
 }
+
+const EXTERNAL_CHECK_INTERVAL_MS = 4000;
 
 function isMac(): boolean {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);

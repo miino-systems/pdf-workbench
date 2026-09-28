@@ -70,8 +70,8 @@ const ANCHOR_LABELS: Record<StampAnchor, string> = {
 
 // ------------------------------------------------------------------ utils
 
-/** A debounced function that can also be flushed: run its pending call (if any) immediately. */
-type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { flush: () => void };
+/** A debounced function that can also be flushed (run its pending call now) or cancelled (drop it). */
+type Debounced<Args extends unknown[]> = ((...args: Args) => void) & { flush: () => void; cancel: () => void };
 
 function debounce<Args extends unknown[]>(fn: (...args: Args) => void, ms: number): Debounced<Args> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -93,6 +93,11 @@ function debounce<Args extends unknown[]>(fn: (...args: Args) => void, ms: numbe
     const toRun = pendingArgs;
     pendingArgs = undefined;
     if (toRun) fn(...toRun);
+  };
+  debounced.cancel = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    pendingArgs = undefined;
   };
   return debounced;
 }
@@ -650,6 +655,7 @@ export const stampsSection: Section = {
     // Pending debounced-save flushers, so switching the selection doesn't
     // leave up to 400ms of typing unsaved.
     let flushDefSave: (() => void) | undefined;
+    let cancelDefSave: (() => void) | undefined;
     let flushPlacementSaves: (() => void)[] = [];
 
     function findDef(id: string | undefined): StampDefinition | undefined {
@@ -786,6 +792,7 @@ export const stampsSection: Section = {
       }
       const debouncedSave = debounce(() => void doSave(), 400);
       flushDefSave = debouncedSave.flush;
+      cancelDefSave = debouncedSave.cancel;
       function scheduleSave(): void {
         defStatus.textContent = '未保存の変更…';
         debouncedSave();
@@ -914,6 +921,9 @@ export const stampsSection: Section = {
 
       const selectionChanged = draftDefId !== def.id;
       if (selectionChanged || JSON.stringify(def) !== savedJson) {
+        // Changed underneath the editor (undo, or stamps.json edited outside
+        // the app): a pending save of the old draft must not overwrite it.
+        if (!selectionChanged) cancelDefSave?.();
         draft = structuredClone(def);
         draftDefId = def.id;
         savedJson = JSON.stringify(draft);

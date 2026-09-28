@@ -144,24 +144,34 @@ export async function loadWorkspace(fs: WorkspaceFS): Promise<WorkspaceState> {
   return { fs, config, stamps, preflight, jobs, sequence: normalized.config, warnings };
 }
 
-export async function saveWorkspaceConfig(fs: WorkspaceFS, config: WorkspaceConfig): Promise<void> {
-  await fs.writeText(WORKBENCH_FILES.workspace, toPrettyJson(config));
+export async function saveWorkspaceConfig(fs: WorkspaceFS, config: WorkspaceConfig): Promise<string> {
+  const text = toPrettyJson(config);
+  await fs.writeText(WORKBENCH_FILES.workspace, text);
+  return text;
 }
 
-export async function saveStampsConfig(fs: WorkspaceFS, stamps: StampsConfig): Promise<void> {
-  await fs.writeText(WORKBENCH_FILES.stamps, toPrettyJson(stamps));
+export async function saveStampsConfig(fs: WorkspaceFS, stamps: StampsConfig): Promise<string> {
+  const text = toPrettyJson(stamps);
+  await fs.writeText(WORKBENCH_FILES.stamps, text);
+  return text;
 }
 
-export async function savePreflightConfig(fs: WorkspaceFS, preflight: PreflightConfig): Promise<void> {
-  await fs.writeText(WORKBENCH_FILES.preflight, toPrettyJson(preflight));
+export async function savePreflightConfig(fs: WorkspaceFS, preflight: PreflightConfig): Promise<string> {
+  const text = toPrettyJson(preflight);
+  await fs.writeText(WORKBENCH_FILES.preflight, text);
+  return text;
 }
 
-export async function saveJobsConfig(fs: WorkspaceFS, jobs: JobsConfig): Promise<void> {
-  await fs.writeText(WORKBENCH_FILES.jobs, toPrettyJson(jobs));
+export async function saveJobsConfig(fs: WorkspaceFS, jobs: JobsConfig): Promise<string> {
+  const text = toPrettyJson(jobs);
+  await fs.writeText(WORKBENCH_FILES.jobs, text);
+  return text;
 }
 
-export async function saveSequenceConfig(fs: WorkspaceFS, sequence: SequenceConfig): Promise<void> {
-  await fs.writeText(WORKBENCH_FILES.sequence, toPrettyJson(sequence));
+export async function saveSequenceConfig(fs: WorkspaceFS, sequence: SequenceConfig): Promise<string> {
+  const text = toPrettyJson(sequence);
+  await fs.writeText(WORKBENCH_FILES.sequence, text);
+  return text;
 }
 
 /** Persist all 5 config files from a `WorkspaceState` in one call. */

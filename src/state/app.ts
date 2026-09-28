@@ -32,6 +32,7 @@ import {
   listRecentWorkspaces,
   loadWorkspace,
   outputPathFor,
+  preflightCopyPathFor,
   pickWorkspaceDirectory,
   rememberWorkspaceHandle,
   saveJobsConfig,
@@ -1005,6 +1006,12 @@ export class AppController {
     const ws = this.requireWorkspace();
     const entry = ws.sequence.entries.find((e) => e.file === sourcePath);
     return outputPathFor(sourcePath, ws.config, entry?.output);
+  }
+
+  /** Path of the annotated preflight copy in `dir`, named after the source's output file (see {@link outputPathFor}). */
+  preflightCopyPathFor(sourcePath: string, dir: string): string {
+    const entry = this.requireWorkspace().sequence.entries.find((e) => e.file === sourcePath);
+    return preflightCopyPathFor(sourcePath, dir, entry?.output);
   }
 
   // ------------------------------------------------------------ undo/redo

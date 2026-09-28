@@ -8,7 +8,7 @@ import {
   saveStampsConfig,
 } from '@/workspace/store';
 import { createDefaultPreflightConfig } from '@/workspace/defaults';
-import { outputPathFor, isSourcePath, joinPath, dirname, basename, stripExtension } from '@/workspace/paths';
+import { outputPathFor, preflightCopyPathFor, isSourcePath, joinPath, dirname, basename, stripExtension } from '@/workspace/paths';
 import { createMemoryDirectory, dumpTree } from './helpers/memfs';
 
 function makeFs(): WorkspaceFS {
@@ -109,6 +109,14 @@ describe('workspace/paths', () => {
     expect(outputPathFor('papers/report.pdf', config, 'sub/NOLTA-01.PDF')).toBe('output/sub/NOLTA-01.PDF');
     expect(outputPathFor('papers/report.pdf', config, '../papers/report.pdf')).toBe('output/papers/report.pdf');
     expect(outputPathFor('papers/report.pdf', config, '   ')).toBe('output/report_stamped.pdf');
+  });
+
+  it('preflightCopyPathFor follows the output name rule with a _preflight suffix', () => {
+    expect(preflightCopyPathFor('papers/report.pdf', 'preflight')).toBe('preflight/report_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', 'NOLTA-01.pdf')).toBe('preflight/NOLTA-01_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', 'sub/NOLTA-02')).toBe('preflight/sub/NOLTA-02_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', '../x.PDF')).toBe('preflight/x_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', '  ')).toBe('preflight/report_preflight.pdf');
   });
 
   it('outputPathFor builds <output dir>/<base><suffix>.pdf', () => {

@@ -44,4 +44,4 @@ export type { WorkspaceState } from './store';
 export { rememberWorkspaceHandle, listRecentWorkspaces, forgetWorkspace } from './recent';
 export type { RecentWorkspace } from './recent';
 
-export { joinPath, dirname, basename, stripExtension, outputPathFor, isSourcePath } from './paths';
+export { joinPath, dirname, basename, stripExtension, outputPathFor, preflightCopyPathFor, isSourcePath } from './paths';

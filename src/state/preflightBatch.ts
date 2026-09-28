@@ -32,7 +32,7 @@ import {
 } from '@/preflight';
 import { sequenceItemFor } from '@/sequence';
 import { effectivePosition, resolvePages, stampRect } from '@/stamps';
-import { basename, stripExtension } from '@/workspace';
+import { basename } from '@/workspace';
 import type { AppController } from './app';
 import { createFontResolver } from './generate';
 
@@ -204,8 +204,7 @@ export async function runPreflightBatch(
       cancelled = true;
       break;
     }
-    const stem = stripExtension(basename(file));
-    const annotatedPath = `${dir}/${stem}_preflight.pdf`;
+    const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
     try {
       const bytes = await ws.fs.readBytes(file);
       const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics, signal: opts.signal });
@@ -269,11 +268,10 @@ export async function preflightSingle(
 ): Promise<{ report: PreflightReport; annotated?: string }> {
   const ws = ctrl.requireWorkspace();
   const dir = preflightDir(ctrl);
-  const annotatedPath = `${dir}/${stripExtension(basename(file))}_preflight.pdf`;
+  const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
   const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize });
   let annotated: string | undefined;
   if (report.result !== 'ok') {
-    await ws.fs.mkdirp(dir);
     await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, ws.preflight));
     annotated = annotatedPath;
   } else if (await ws.fs.exists(annotatedPath)) {

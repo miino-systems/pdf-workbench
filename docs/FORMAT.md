@@ -84,8 +84,11 @@ Workspace 全体の設定です。
 - `directories.papers` は読み取り専用として扱われる元 PDF のディレクトリで、
   アプリは絶対に上書きしません。
 - `directories.preflight`（省略時 `preflight`）は、Preflight タブの一括検査で
-  問題のあった PDF の注釈付きコピー（`<名前>_preflight.pdf`）と
-  `summary.csv` / `summary.json` を保存するディレクトリです。一括検査の
+  問題のあった PDF の注釈付きコピーと
+  `summary.csv` / `summary.json` を保存するディレクトリです。注釈付きコピーの
+  名前は出力ファイル名の規則に合わせ，`sequence.json` の `entries[].output`
+  があればその名前（拡張子なし）に，なければ元ファイル名に `_preflight.pdf`
+  を付けたものです（例: `NOLTA2026-A1-01_preflight.pdf`，`paper001_preflight.pdf`）．一括検査の
   たびに中身はいったん全て削除されます（途中で中止した場合は、検査済みの
   分だけが残り、`summary.json` に `"cancelled": true` が入ります）。
 - PDF タブの「すべて作り直す」をオンにした全ファイル処理では、`output/` の

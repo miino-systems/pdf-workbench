@@ -49,20 +49,31 @@ export function stripExtension(path: string): string {
  * always resolved *inside* the output directory (`..` segments are dropped).
  */
 export function outputPathFor(sourcePath: string, config: WorkspaceConfig, outputName?: string): string {
-  const custom = outputName?.trim();
-  if (custom) {
-    const cleaned = custom
-      .replace(/\\/g, '/')
-      .split('/')
-      .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
-      .join('/');
-    if (cleaned) {
-      const withExt = /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`;
-      return joinPath(config.directories.output, withExt);
-    }
-  }
+  const custom = cleanOutputName(outputName);
+  if (custom) return joinPath(config.directories.output, /\.pdf$/i.test(custom) ? custom : `${custom}.pdf`);
   const base = basename(stripExtension(sourcePath));
   return joinPath(config.directories.output, `${base}${config.output.suffix}.pdf`);
+}
+
+/**
+ * Path of the annotated preflight copy of a source PDF, named after its
+ * output file: `<dir>/<outputName stem>_preflight.pdf` when `sequence.json`
+ * gives an output name (sub-directories kept, `..` dropped, as for
+ * {@link outputPathFor}), otherwise `<dir>/<name>_preflight.pdf`.
+ */
+export function preflightCopyPathFor(sourcePath: string, dir: string, outputName?: string): string {
+  const custom = cleanOutputName(outputName);
+  const stem = custom ? custom.replace(/\.pdf$/i, '') : basename(stripExtension(sourcePath));
+  return joinPath(dir, `${stem}_preflight.pdf`);
+}
+
+/** A per-file output name made relative and safe (`\\` → `/`, no `.`/`..`/empty segments); `''` when unset. */
+function cleanOutputName(outputName?: string): string {
+  return (outputName?.trim() ?? '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
+    .join('/');
 }
 
 /** True when `path` lies inside the configured source (`papers/`) directory. */

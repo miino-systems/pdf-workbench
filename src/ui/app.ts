@@ -23,6 +23,8 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const main = h('main', { class: 'app-main' });
   const toasts = h('div', { class: 'toasts' });
   const busy = h('span', { class: 'muted busy-indicator' });
+  const cancelBtn = button('中止', () => ctrl.cancelRunning(), 'btn btn-sm', 'x');
+  cancelBtn.title = '処理中のファイルが終わったところで止めます（Esc）';
   const wsLabel = h('span', { class: 'muted' });
   const undoBtn = iconButton('undo', '元に戻す', () => void ctrl.undo());
   const redoBtn = iconButton('redo', 'やり直す', () => void ctrl.redo());
@@ -36,6 +38,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     tabs,
     h('span', { class: 'spacer' }),
     busy,
+    cancelBtn,
     h('span', { class: 'row header-actions' }, undoBtn, redoBtn, reloadBtn),
     h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, icon('lock'), PRIVACY_NOTICE),
   );
@@ -120,6 +123,9 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
         ? `${state.busy}…`
         : '';
     replaceChildren(busy, busyText ? [icon('loader', { className: 'icon-spin' }), busyText] : []);
+    cancelBtn.hidden = !state.cancel;
+    cancelBtn.disabled = !!state.cancel?.cancelling;
+    cancelBtn.lastChild!.textContent = state.cancel?.cancelling ? '中止しています…' : '中止';
     wsLabel.textContent = state.workspace ? `Workspace: ${state.workspace.config.name}/` : '';
     renderActions(state);
     renderToasts(state);
@@ -167,8 +173,13 @@ function isTextEditing(target: EventTarget | null): boolean {
  *  - Cmd/Ctrl+Z → undo, Cmd/Ctrl+Shift+Z or Ctrl+Y → redo (config edits)
  *  - Cmd/Ctrl+R → reload the workspace from disk instead of the page
  *    (Cmd/Ctrl+Shift+R still reloads the page itself)
+ *  - Esc → stop a running batch (全ファイルを処理 / Preflight 一括検査)
  */
 export function handleShortcut(ev: KeyboardEvent, ctrl: AppController): void {
+  if (ev.key === 'Escape' && ctrl.state.cancel && !document.querySelector('dialog[open]')) {
+    if (ctrl.cancelRunning()) ev.preventDefault();
+    return;
+  }
   const mod = isMac() ? ev.metaKey : ev.ctrlKey;
   if (!mod || ev.altKey) return;
   const key = ev.key.toLowerCase();

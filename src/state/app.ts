@@ -19,7 +19,7 @@ import type {
   WorkspaceConfig,
   WorkspaceFileEntry,
 } from '@/core/types';
-import { WORKBENCH_FILES } from '@/core/types';
+import { WORKBENCH_DIR, WORKBENCH_FILES } from '@/core/types';
 import { sha256 } from '@/crypto';
 import {
   WorkspaceFS,
@@ -112,6 +112,8 @@ export interface AppState {
   busy?: string;
   /** Progress of a long batch (shown as n/N and %), while it runs. */
   progress?: { label: string; done: number; total: number };
+  /** A cancellable batch is running (中止 / Esc); `cancelling` once asked to stop. */
+  cancel?: { cancelling: boolean };
   toasts: Toast[];
   /** Recently loaded events (for the History tab). */
   events: HistoryEvent[];
@@ -184,6 +186,8 @@ export class AppController {
   private diskText = new Map<ConfigFile, string>();
   /** Unparseable external versions already reported (so the periodic check doesn't repeat the toast). */
   private reportedBadText = new Map<ConfigFile, string>();
+  /** The running cancellable batch, if any (see `runCancellable`). */
+  private batchAbort?: AbortController;
   /** Serialises config reads/writes so the external-change check never sees a half-finished own save. */
   private io: Promise<unknown> = Promise.resolve();
 
@@ -223,6 +227,33 @@ export class AppController {
 
   dismissToast(id: number): void {
     this.store.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  }
+
+  /**
+   * Run a long batch that can be stopped (中止 button, Esc): `fn` gets an
+   * AbortSignal and should check it between items. Progress is cleared
+   * when it ends.
+   */
+  async runCancellable<T>(label: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
+    if (this.batchAbort) return undefined;
+    const ac = new AbortController();
+    this.batchAbort = ac;
+    this.store.set({ cancel: { cancelling: false } });
+    try {
+      return await this.run(label, () => fn(ac.signal));
+    } finally {
+      this.batchAbort = undefined;
+      this.store.set({ cancel: undefined, progress: undefined });
+    }
+  }
+
+  /** Ask the running batch to stop after the current item. Returns false when nothing can be cancelled. */
+  cancelRunning(): boolean {
+    const ac = this.batchAbort;
+    if (!ac || ac.signal.aborted) return false;
+    ac.abort();
+    this.store.set({ cancel: { cancelling: true } });
+    return true;
   }
 
   /** Report batch progress (undefined to clear). */
@@ -929,6 +960,44 @@ export class AppController {
     await this.log(EVENT_TYPES.externalChange, { files: names });
     if (changed.includes('sequence') || changed.includes('jobs')) await this.refreshFiles();
     return names;
+  }
+
+  /**
+   * Number of files (recursively, hidden ones included) in a generated-files
+   * directory — `output/` or the preflight folder — for the confirmation
+   * before {@link clearGeneratedDir}.
+   */
+  async countFilesIn(dir: string): Promise<number> {
+    const ws = this.requireWorkspace();
+    return (await ws.fs.list(dir, { recursive: true, includeHidden: true })).length;
+  }
+
+  /**
+   * Delete everything in a generated-files directory (a full re-run starts
+   * from an empty folder). Refuses the source, asset and font directories
+   * and the workspace's own settings. For `output/`, the jobs are forgotten
+   * too, so every file shows as 未処理 until it is generated again.
+   */
+  async clearGeneratedDir(dir: string): Promise<number> {
+    const ws = this.requireWorkspace();
+    const d = ws.config.directories;
+    const norm = (p: string): string => p.replace(/^\.\//, '').replace(/\/+$/, '');
+    const target = norm(dir);
+    const protectedDirs = [d.papers, d.assets, d.fonts, WORKBENCH_DIR].map(norm);
+    if (!target || target.startsWith('.') || protectedDirs.some((p) => target === p || target.startsWith(`${p}/`) || p.startsWith(`${target}/`))) {
+      throw new Error(`${dir} は削除できないディレクトリです`);
+    }
+    const count = await this.countFilesIn(target);
+    await ws.fs.remove(target);
+    await ws.fs.mkdirp(target);
+    if (target === norm(d.output)) {
+      await this.guardedWrite(ws, 'jobs', () => {
+        ws.jobs = { ...ws.jobs, jobs: [] };
+      });
+      await this.refreshFiles();
+    }
+    await this.log(EVENT_TYPES.generatedCleared, { dir: target, files: count });
+    return count;
   }
 
   /** Output path for a source, honouring a per-file `output` name from `sequence.json`. */

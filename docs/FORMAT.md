@@ -85,7 +85,11 @@ Workspace 全体の設定です。
   アプリは絶対に上書きしません。
 - `directories.preflight`（省略時 `preflight`）は、Preflight タブの一括検査で
   問題のあった PDF の注釈付きコピー（`<名前>_preflight.pdf`）と
-  `summary.csv` / `summary.json` を保存するディレクトリです。
+  `summary.csv` / `summary.json` を保存するディレクトリです。一括検査の
+  たびに中身はいったん全て削除されます（途中で中止した場合は、検査済みの
+  分だけが残り、`summary.json` に `"cancelled": true` が入ります）。
+- PDF タブの「すべて作り直す」をオンにした全ファイル処理では、`output/` の
+  中身を全て削除し、`jobs.json` の記録も消してから生成します。
 - `output.suffix` は既定の出力ファイル名（`<元ファイル名><suffix>.pdf`）に使う
   接尾辞です。`sequence.json` の `entries[].output` で個別に上書きできます。
 - `history.hashChain` を `true` にすると、`history/events.jsonl` に追記する

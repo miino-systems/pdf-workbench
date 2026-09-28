@@ -578,35 +578,45 @@ export const pdfSection: Section = {
       if (paths.length === 0) return;
       const skipped = ctrl.state.files.length - paths.length;
       const { enabled, disabled } = stampSummary(ctrl.state);
+      // A full re-run starts from an empty output folder.
+      const outputDir = ctrl.requireWorkspace().config.directories.output;
+      const existing = regenerateAll ? await ctrl.countFilesIn(outputDir) : 0;
       const message =
         `${paths.length} 件の PDF に次のスタンプを付けて生成します${skipped ? `（最新の ${skipped} 件はそのまま）` : ''}．\n\n` +
+        (existing ? `【注意】${outputDir}/ 内の既存のファイル ${existing} 件をすべて削除してから生成します．\n\n` : '') +
         `有効:\n${enabled.map((n) => `  ・${n}`).join('\n')}` +
         (disabled.length ? `\n\n無効（付きません）:\n${disabled.map((n) => `  ・${n}`).join('\n')}` : '') +
         '\n\nよろしいですか？';
       if (!confirm(message)) return;
       const label = '全ファイルを処理';
-      await ctrl.run(label, async () => {
+      await ctrl.runCancellable(label, async (signal) => {
+        if (regenerateAll) await ctrl.clearGeneratedDir(outputDir);
         let done = 0;
         let warned = 0;
+        let stopped = false;
         const failed: string[] = [];
-        try {
-          for (const [i, path] of paths.entries()) {
-            ctrl.setProgress({ label, done: i, total: paths.length });
-            try {
-              const res = await generateStampedPdf(ctrl, path);
-              if (res) {
-                done += 1;
-                if (res.warnings.length) warned += 1;
-                // A few per-file toasts; the rest are in each file's job info.
-                if (warned <= 3) for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
-              }
-            } catch (e) {
-              failed.push(path);
-              console.error('batch generate failed', path, e);
-            }
+        for (const [i, path] of paths.entries()) {
+          if (signal.aborted) {
+            stopped = true;
+            break;
           }
-        } finally {
-          ctrl.setProgress(undefined);
+          ctrl.setProgress({ label, done: i, total: paths.length });
+          try {
+            const res = await generateStampedPdf(ctrl, path);
+            if (res) {
+              done += 1;
+              if (res.warnings.length) warned += 1;
+              // A few per-file toasts; the rest are in each file's job info.
+              if (warned <= 3) for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
+            }
+          } catch (e) {
+            failed.push(path);
+            console.error('batch generate failed', path, e);
+          }
+        }
+        if (stopped) {
+          ctrl.toast('info', `全ファイルの処理を中止しました（${done}/${paths.length} 件を生成済み．残りは「更新が必要なファイルを処理」で続けられます）`, 10000);
+          return;
         }
         ctrl.toast(
           failed.length ? 'warn' : 'ok',
@@ -655,7 +665,7 @@ export const pdfSection: Section = {
       batchBtn.title = regenerateAll
         ? 'すべてのファイルを作り直します'
         : '未処理・要更新・エラーのファイルだけを生成します（最新のものはそのまま）';
-      const allCheckbox = h('input', { type: 'checkbox', checked: regenerateAll });
+      const allCheckbox = h('input', { type: 'checkbox', checked: regenerateAll, title: `オンにすると ${ws?.config.directories.output ?? 'output'}/ の既存ファイルをすべて削除してから作り直します` });
       allCheckbox.addEventListener('change', () => {
         regenerateAll = allCheckbox.checked;
         renderActions(ctrl.state);
@@ -683,10 +693,18 @@ export const pdfSection: Section = {
               { class: 'batch-progress' },
               h('progress', { max: p.total, value: p.done }),
               h('span', { class: 'mono' }, `${p.done}/${p.total}（${pct}%）`),
+              state.cancel
+                ? (() => {
+                    const b = button(state.cancel.cancelling ? '中止しています…' : '中止', () => ctrl.cancelRunning(), 'btn btn-sm', 'x');
+                    b.disabled = state.cancel.cancelling;
+                    b.title = '処理中のファイルが終わったところで止めます（Esc）';
+                    return b;
+                  })()
+                : '',
             )
           : '',
         h('div', { class: 'row' }, generateBtn, batchBtn, outputsBtn),
-        ws ? h('label', { class: 'row muted settings-note', style: 'margin-top:6px' }, allCheckbox, '最新のファイルも作り直す') : '',
+        ws ? h('label', { class: 'row muted settings-note', style: 'margin-top:6px' }, allCheckbox, 'すべて作り直す（出力フォルダを空にしてから）') : '',
       );
     }
 

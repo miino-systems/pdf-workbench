@@ -8,14 +8,14 @@
  * `pdf/stamper/measure` so the overlay matches what `applyStamps` will
  * actually draw.
  */
-import type { PageSize, StampPosition, StampsConfig } from '@/core/types';
+import type { PageSize, StampDefinition, StampPosition, StampsConfig } from '@/core/types';
 import { checkStampCollision } from '@/preflight';
 import { PdfRenderer, canvasToPdf, pdfToCanvas } from '@/pdf/renderer';
-import { estimateStampBox } from '@/pdf/stamper/measure';
+import { StampMetrics, measureLayers, type Box } from '@/pdf/stamper';
 import { describeRange, sequenceItemFor } from '@/sequence';
 import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
 import { STATUS_LABEL, type AppState, type PdfFileItem } from '@/state/app';
-import { generateStampedPdf } from '@/state/generate';
+import { createFontResolver, generateStampedPdf } from '@/state/generate';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
 import { button, formatBytes, h, replaceChildren } from '../dom';
@@ -131,6 +131,9 @@ export const pdfSection: Section = {
     let lastPageSize: PageSize | undefined;
     let showOverlay = true;
     let collidingIds = new Set<string>();
+    /** Real font/image metrics for the overlay, per loaded workspace (a reload creates a fresh one). */
+    let metrics: StampMetrics | undefined;
+    let metricsWorkspaceFs: unknown;
 
     let lastFilesSnapshot: PdfFileItem[] | undefined;
     let lastSequenceRef: AppState['sequence'];
@@ -139,6 +142,35 @@ export const pdfSection: Section = {
     let lastStampsRef: StampsConfig | undefined;
     let lastRenderedPage = 0;
     let lastRenderedZoom = 0;
+
+    /**
+     * The box `applyStamps` will draw for `def`, measured with the real fonts
+     * and image sizes once they are loaded (the heuristic estimate until then;
+     * loading triggers a redraw).
+     */
+    function measureBox(state: AppState, def: StampDefinition, page: number, file: string | undefined): Box {
+      const ws = state.workspace;
+      if (ws && metricsWorkspaceFs !== ws.fs) {
+        metricsWorkspaceFs = ws.fs;
+        metrics = new StampMetrics({
+          resolveFont: (ref) => createFontResolver(ctrl).resolve(ref),
+          readImage: (src) => ws.fs.readBytes(src),
+        });
+      }
+      const m = metrics;
+      if (m && ws) {
+        void m.prepare(ws.stamps.definitions).then((loaded) => {
+          if (loaded && m === metrics) drawOverlay(latestState);
+        });
+      }
+      return measureLayers(def.layers, {
+        page: displayedPageNumber(state, page),
+        pages: state.pageCount,
+        file,
+        fonts: m?.fonts,
+        images: m?.images,
+      });
+    }
 
     function setHasFile(has: boolean): void {
       previewPage.hidden = !has;
@@ -222,7 +254,7 @@ export const pdfSection: Section = {
           const pages = resolvePages(inst.pages, state.pageCount);
           if (!pages.includes(page)) continue;
 
-          const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
+          const box = measureBox(state, def, page, file);
           const position = effectivePosition(def, inst);
           const rect = stampRect(position, pageSize, box);
           const topLeft = pdfToCanvas({ x: rect.x, y: rect.y + rect.height }, pageSize, scale);
@@ -330,7 +362,7 @@ export const pdfSection: Section = {
         if (!def) continue;
         const pages = resolvePages(inst.pages, state.pageCount);
         if (!pages.includes(page)) continue;
-        const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
+        const box = measureBox(state, def, page, file);
         const position = effectivePosition(def, inst);
         const rect = stampRect(position, pageSize, box);
         const result = checkStampCollision(imageData, pageSize, rect);

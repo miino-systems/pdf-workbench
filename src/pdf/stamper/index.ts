@@ -19,6 +19,7 @@ export {
   type ImageSize,
   type MeasureContext,
 } from './measure';
+export { StampMetrics, imageNaturalSize, type StampMetricsSources } from './metrics';
 export { layoutTextBlock, DEFAULT_LINE_HEIGHT_FACTOR, type TextBlockLayout } from './sanitize';
 export {
   normalizeAngle,

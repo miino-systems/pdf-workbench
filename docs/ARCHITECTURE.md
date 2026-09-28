@@ -229,7 +229,7 @@ workspace/
 │   ├─ preflight.json        PreflightConfig
 │   ├─ jobs.json             JobsConfig    { jobs[] }
 │   ├─ sequence.json         SequenceConfig  { order, firstPage, startOn, entries[] }   (無い場合は既定＝名前順)
-│   ├─ reports/              PreflightReport JSON
+│   ├─ reports/              PreflightReport JSON (one per PDF, <stem>.json, overwritten)
 │   └─ history/
 │       ├─ events.jsonl      HistoryEvent per line (append-only)
 │       └─ snapshots/        <YYYYMMDDTHHMMSS>.json  Snapshot

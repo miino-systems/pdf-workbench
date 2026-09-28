@@ -49,7 +49,19 @@ export {
   type CompiledTextRule,
 } from './textRules.js';
 export { findTextOverlaps } from './overlap.js';
-export { reportFileName, summarizeReport } from './report.js';
+export {
+  REPORT_TEXT_MAX,
+  isLegacyReportName,
+  listReportNames,
+  removeReportFiles,
+  reportFileName,
+  reportPath,
+  reportProblemCounts,
+  saveReportFile,
+  serializeReport,
+  summarizeReport,
+  type ReportFS,
+} from './report.js';
 export {
   DEFAULT_ANNOTATION_MESSAGES,
   PHANTOM_MESSAGE_KEY,

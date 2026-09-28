@@ -1118,11 +1118,11 @@ export class AppController {
 
   async saveReport(report: PreflightReport): Promise<string> {
     const ws = this.requireWorkspace();
-    const { reportFileName } = await import('@/preflight');
-    const path = `${WORKBENCH_FILES.reportsDir}/${reportFileName(report.file, new Date())}`;
-    await ws.fs.writeText(path, `${JSON.stringify(report, null, 2)}\n`);
+    const { reportProblemCounts, saveReportFile } = await import('@/preflight');
+    const path = await saveReportFile(ws.fs, report);
     this.store.set({ lastReport: report });
-    await this.log(EVENT_TYPES.preflightRun, { file: report.file, result: report.result, report: path });
+    // The report file is overwritten by the next check: the log keeps this run's verdict and counts.
+    await this.log(EVENT_TYPES.preflightRun, { file: report.file, result: report.result, ...reportProblemCounts(report), report: path });
     return path;
   }
 }

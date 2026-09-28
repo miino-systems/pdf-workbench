@@ -290,3 +290,40 @@ describe('filterBatchItems', () => {
     expect(countBatchCodes(items)).toEqual([['TEXT_OVERLAP', 3], ['BOTTOM_MARGIN', 1], ['PAGE_SIZE', 1]]);
   });
 });
+
+describe('one report per PDF', () => {
+  it('overwrites <basename>.json, removes old per-run reports and keeps none for skipped PDFs', async () => {
+    const { setPreflightSkipped } = await import('@/state/preflightBatch');
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    const bad = await buildFixturePdf([{ size: A4, texts: [{ text: 'Header in the margin', x: 100, y: 820 }] }]);
+    for (const n of ['a', 'b', 'c']) await ws.fs.writeBytes(`papers/${n}.pdf`, bad);
+    await ctrl.refreshFiles();
+    // Left over from the old format; `a.v2.json` belongs to another PDF and stays.
+    await ws.fs.writeText('.pdf-workbench/reports/a.20260101T000000.json', '{}');
+    await ws.fs.writeText('.pdf-workbench/reports/a.20260102T000000.json', '{}');
+    await ws.fs.writeText('.pdf-workbench/reports/a.v2.json', '{}');
+    const names = async () => (await ws.fs.list('.pdf-workbench/reports')).map((e) => e.name);
+
+    const res = await runPreflightBatch(ctrl);
+    expect(res.items.find((i) => i.file === 'papers/a.pdf')!.report).toBe('.pdf-workbench/reports/a.json');
+    expect(await names()).toEqual(['a.json', 'a.v2.json', 'b.json', 'c.json']);
+    await runPreflightBatch(ctrl);
+    expect(await names()).toEqual(['a.json', 'a.v2.json', 'b.json', 'c.json']);
+
+    // A single check overwrites the same file and logs the verdict and counts.
+    const { report } = await (await import('@/state/preflightBatch')).preflightSingle(ctrl, 'papers/b.pdf', bad);
+    expect(await ctrl.saveReport(report)).toBe('.pdf-workbench/reports/b.json');
+    await ctrl.saveReport(report);
+    expect(await names()).toEqual(['a.json', 'a.v2.json', 'b.json', 'c.json']);
+    expect(JSON.parse(await ws.fs.readText('.pdf-workbench/reports/b.json')).ranAt).toBe(report.ranAt);
+    const run = ctrl.state.events.filter((e) => e.type === 'preflight.run').at(-1)!;
+    expect(run).toMatchObject({ file: 'papers/b.pdf', result: 'warning', errors: 0, warnings: 1, report: '.pdf-workbench/reports/b.json' });
+
+    // Skipped PDFs keep no report; unskipping checks and saves it again.
+    await setPreflightSkipped(ctrl, 'papers/c.pdf', true);
+    expect(await names()).toEqual(['a.json', 'a.v2.json', 'b.json']);
+    await setPreflightSkipped(ctrl, 'papers/c.pdf', false);
+    expect(await names()).toEqual(['a.json', 'a.v2.json', 'b.json', 'c.json']);
+  });
+});

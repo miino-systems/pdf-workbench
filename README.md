@@ -64,7 +64,7 @@ workspace/
 │   ├─ preflight.json   preflight ルール
 │   ├─ jobs.json        処理ジョブ（source の SHA-256、output パス、通しページ範囲）
 │   ├─ sequence.json    通しページ番号の順序（並び順・先頭番号・ファイル別の固定/除外）
-│   ├─ reports/         preflight レポート (JSON)
+│   ├─ reports/         preflight レポート (JSON，論文ごとに最新 1 件: <名前>.json)
 │   └─ history/
 │       ├─ events.jsonl 操作履歴（append-only, JSON Lines）
 │       └─ snapshots/   設定 snapshot（YYYYMMDDTHHMMSS.json）

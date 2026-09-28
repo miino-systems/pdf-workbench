@@ -10,6 +10,7 @@ export const EVENT_TYPES = {
   stampRemoved: 'stamp.removed',
   stampUpdated: 'stamp.updated',
   preflightRun: 'preflight.run',
+  preflightBatch: 'preflight.batch',
   pdfGenerated: 'pdf.generated',
   snapshotSaved: 'snapshot.saved',
   fontSelected: 'font.selected',

@@ -103,6 +103,7 @@ export const DEFAULT_GITIGNORE = `# PDF Workbench: source PDFs and generated out
 papers/
 output/
 preview/
+preflight/
 
 # 必要に応じて
 # assets/

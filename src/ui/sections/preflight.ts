@@ -15,8 +15,26 @@ import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
 import { PREFLIGHT_PRESETS, applyPreflightPreset, checkMarginsByRaster, marginsForPage, runPreflight, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
+import { loadPreflightSummary, preflightDir, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { button, h, replaceChildren } from '../dom';
+
+/** Render every page at 1 px/pt into an offscreen canvas, for the raster checks. */
+async function* rasterizePages(bytes: Uint8Array): AsyncIterable<PageRaster> {
+  const renderer = new PdfRenderer(bytes);
+  try {
+    await renderer.load();
+    const canvas = document.createElement('canvas');
+    for (let page = 1; page <= renderer.pageCount; page += 1) {
+      await renderer.renderPage(page, canvas, { scale: 1 });
+      const ctx2d = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx2d) throw new Error('2D canvas context unavailable');
+      yield { page, pageSize: renderer.getPageSize(page), image: ctx2d.getImageData(0, 0, canvas.width, canvas.height) };
+    }
+  } finally {
+    await renderer.destroy();
+  }
+}
 
 function debounce<Args extends unknown[]>(fn: (...args: Args) => void, ms: number): (...args: Args) => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -298,12 +316,122 @@ export const preflightSection: Section = {
       h('details', { class: 'panel' }, h('summary', null, '保存される JSON (.pdf-workbench/preflight.json)'), rawJsonBox),
     );
 
-    const runButton = button('選択中の PDF を検査', () => void runCheck(), 'btn btn-primary');
+    const runButton = button('選択中の PDF を検査', () => void runCheck(), 'btn');
     const runHint = h('p', { class: 'muted' });
     const resultBox = h('div', null);
-    const runPanel = h('div', { class: 'panel' }, h('h2', null, '実行'), h('div', { class: 'row' }, runButton), runHint, resultBox);
+    const batchButton = button('全 PDF を一括検査', () => void runBatch(), 'btn btn-primary');
+    const batchBox = h('div', null);
+    const runPanel = h(
+      'div',
+      { class: 'panel' },
+      h('h2', null, '一括検査'),
+      h(
+        'p',
+        { class: 'muted settings-note' },
+        '全 PDF を検査し，問題のあった PDF には問題箇所に赤枠と注釈（コメント）を付けたコピーを保存します（元 PDF は変更しません）．',
+      ),
+      h('div', { class: 'row' }, batchButton),
+      batchBox,
+      h('h3', null, '1 件だけ検査'),
+      h('div', { class: 'row' }, runButton),
+      runHint,
+      resultBox,
+    );
 
     const gridEl = h('div', { class: 'grid grid-2' }, rulesPanel, runPanel);
+
+    let batch: PreflightBatchResult | undefined;
+    let batchWs: unknown;
+
+    /** Open a workspace PDF in a new tab (blob URL; nothing leaves the browser). */
+    async function openInTab(path: string): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws) return;
+      const bytes = await ws.fs.readBytes(path);
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+
+    async function runBatch(): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws || ctrl.state.files.length === 0) return;
+      saveNowRef.save();
+      const label = 'Preflight 一括検査';
+      const res = await ctrl.run(label, async () => {
+        try {
+          return await runPreflightBatch(ctrl, {
+            rasterize: rasterizePages,
+            onProgress: (done, total) => ctrl.setProgress({ label, done, total }),
+          });
+        } finally {
+          ctrl.setProgress(undefined);
+        }
+      });
+      if (!res) return;
+      batch = res;
+      renderBatch(ctrl.state);
+      const { ok, warning, error, failed } = res.counts;
+      ctrl.toast(
+        error || failed ? 'err' : warning ? 'warn' : 'ok',
+        `一括検査: 問題なし ${ok} 件／警告 ${warning} 件／エラー ${error} 件${failed ? `／検査失敗 ${failed} 件` : ''}．注釈付きのコピーを ${res.dir}/ に保存しました`,
+        10000,
+      );
+    }
+
+    function renderBatch(state: AppState): void {
+      const ws = state.workspace;
+      batchButton.disabled = !ws || state.files.length === 0 || !!state.busy;
+      batchButton.textContent = `全 PDF を一括検査（${state.files.length} 件）`;
+      if (!ws) return;
+      if (batchWs !== ws.fs) {
+        // Show the last saved summary of this workspace, if any.
+        batchWs = ws.fs;
+        batch = undefined;
+        void loadPreflightSummary(ctrl).then((s) => {
+          if (batchWs === ctrl.state.workspace?.fs) {
+            batch = s;
+            renderBatch(ctrl.state);
+          }
+        });
+      }
+      if (!batch) {
+        replaceChildren(batchBox, h('p', { class: 'muted' }, `結果と注釈付き PDF は ${preflightDir(ctrl)}/ に保存されます．`));
+        return;
+      }
+      const problems = batch.items.filter((it) => it.result !== 'ok');
+      const { ok, warning, error, failed } = batch.counts;
+      replaceChildren(
+        batchBox,
+        h(
+          'div',
+          { class: 'row' },
+          h('span', { class: 'badge ok' }, `問題なし ${ok}`),
+          h('span', { class: 'badge warn' }, `警告 ${warning}`),
+          h('span', { class: 'badge err' }, `エラー ${error}`),
+          failed ? h('span', { class: 'badge err' }, `検査失敗 ${failed}`) : '',
+          h('span', { class: 'muted' }, `${batch.ranAt}（${batch.dir}/summary.csv）`),
+        ),
+        problems.length
+          ? h(
+              'ul',
+              { class: 'list preflight-problems' },
+              problems.map((it) =>
+                h(
+                  'li',
+                  {
+                    title: it.annotated ? 'クリックで注釈付きの PDF を開く' : '',
+                    on: { click: () => it.annotated && void openInTab(it.annotated) },
+                  },
+                  h('span', { class: `badge ${it.result === 'warning' ? 'warn' : 'err'}` }, it.result === 'warning' ? '警告' : it.result === 'error' ? 'エラー' : '失敗'),
+                  h('span', { class: 'name' }, it.file.split('/').pop() ?? it.file),
+                  h('span', { class: 'muted', style: 'flex:2' }, it.summary),
+                ),
+              ),
+            )
+          : h('p', { class: 'ok' }, 'すべての PDF が問題なしでした．'),
+      );
+    }
 
     let draft: PreflightConfig | undefined;
     let savedJson: string | undefined;
@@ -398,6 +526,7 @@ export const preflightSection: Section = {
       rawJsonBox.textContent = JSON.stringify(ws.preflight, null, 2);
 
       renderRunPanel(state);
+      renderBatch(state);
     }
 
     return (state) => applyState(state);

@@ -278,3 +278,5 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 }
 .outputs-dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .outputs-list { max-height: 60vh; overflow-y: auto; }
+.preflight-problems { max-height: 50vh; overflow-y: auto; margin-top: 8px; }
+.preflight-problems li .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

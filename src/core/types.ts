@@ -44,6 +44,8 @@ export interface WorkspaceDirectories {
   assets: string;
   /** Workspace fonts (.ttf/.otf). */
   fonts: string;
+  /** Annotated review copies of PDFs that failed the batch preflight, plus its summary (default `preflight`). */
+  preflight?: string;
 }
 
 export const DEFAULT_DIRECTORIES: WorkspaceDirectories = {
@@ -480,11 +482,27 @@ export type PreflightWarningCode =
   | 'STAMP_COLLISION'
   | string;
 
+/**
+ * Where a preflight problem is on the page, for annotating a review copy.
+ * `rect` is in the page's visible frame (as displayed, `/Rotate` applied),
+ * pt, origin bottom-left.
+ */
+export interface PreflightFinding {
+  code: PreflightWarningCode;
+  /** Which check found it. */
+  source: 'text' | 'raster' | 'page' | 'stamp';
+  rect?: Rect;
+  /** The offending text run (text check) or stamp name (stamp check). */
+  text?: string;
+}
+
 export interface PreflightPageResult {
   page: number; // 1-based
   warnings: PreflightWarningCode[];
   errors?: PreflightWarningCode[];
   details?: Record<string, unknown>;
+  /** Located problems on this page (capped per page), used to annotate a review copy. */
+  findings?: PreflightFinding[];
 }
 
 /** Saved into `.pdf-workbench/reports/<file>.<timestamp>.json` */

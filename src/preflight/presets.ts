@@ -52,17 +52,6 @@ export const PREFLIGHT_PRESETS: readonly PreflightPreset[] = [
     },
   },
   {
-    id: 'nolta-ieice-2026',
-    label: 'NOLTA (IEICE) 2026 (A4)',
-    note: 'NOLTA 2026 の想定値（暫定・要確認）です。数値は編集可能にしてあります。主催者の Author Guidelines / テンプレートが最終的な基準になりますので、投稿前に必ず照合してください。',
-    config: {
-      page: { size: 'A4', orientation: 'portrait', tolerance: 2 },
-      // Top margin generous to leave room for a running header — treat as a
-      // starting point (see `note`), not the confirmed official value.
-      margins: { top: 30, bottom: 25, left: 20, right: 20, unit: 'mm' },
-    },
-  },
-  {
     id: 'ieee-conference-letter',
     label: 'IEEE conference (US Letter)',
     note: 'IEEE の一般的な会議テンプレート値（0.75in 全辺、1 ページ目上部 1in）の目安です。学会ごとの Author Kit を優先してください。',

@@ -283,9 +283,9 @@ baseline = ページ上端 − offsetY − 0.8 × size
   この上書きは余白チェック（`marginText` / `marginRaster`）と、一括検査の
   注釈付きコピーに描く枠の両方に使われます。
 - Preflight タブの「ひな形」（`src/preflight/presets.ts` の
-  `PREFLIGHT_PRESETS`）には、汎用 A4（25mm）/ IEICE 論文誌 / NOLTA 2026 /
-  IEEE conference（US Letter、1 ページ目の上余白 1in）があります。学会の
-  数値は目安（暫定）なので、主催者の執筆要項で確認してください。
+  `PREFLIGHT_PRESETS`）には、汎用 A4（25mm）/ IEICE 論文誌 /
+  IEEE conference（US Letter、1 ページ目の上余白 1in）があります。特定の学会向けの
+  数値は目安なので、主催者の執筆要項で確認してください。
 - `checks`:
   - `marginText`: PDF のテキストオブジェクト座標に基づく余白チェック。
   - `marginRaster`: ラスタライズした画像に基づく余白チェック

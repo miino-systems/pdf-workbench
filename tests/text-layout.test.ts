@@ -131,3 +131,13 @@ describe('layer layout', () => {
     expect(box.height).toBe(30);
   });
 });
+
+describe('image aspect ratio', () => {
+  it('warns when width and height stretch the image, not when one side is given', async () => {
+    const { imageAspectWarning } = await import('@/pdf/stamper');
+    const cc = { id: 'l', type: 'image' as const, src: 'assets/cc.png' };
+    expect(imageAspectWarning({ ...cc, width: 235, height: 20 }, { width: 88, height: 31 })).toMatch(/縦横比が元画像と違います.*高さ 82\.8 pt/);
+    expect(imageAspectWarning({ ...cc, width: 88, height: 31 }, { width: 88, height: 31 })).toBeUndefined();
+    expect(imageAspectWarning({ ...cc, width: 235 }, { width: 88, height: 31 })).toBeUndefined();
+  });
+});

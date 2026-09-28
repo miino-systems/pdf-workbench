@@ -287,6 +287,8 @@ async function buildDrawableLayer(
       throw err instanceof Error ? err : new Error(String(err));
     }
     const { width, height } = resolveImageBoxSize(layer, image);
+    const aspectWarning = imageAspectWarning(layer, image);
+    if (aspectWarning && !ctx.warnings.includes(aspectWarning)) ctx.warnings.push(aspectWarning);
     const box: LayerBox = { dx: layer.dx ?? 0, dy: layer.dy ?? 0, width, height };
 
     return {
@@ -320,6 +322,25 @@ function resolveImageBoxSize(layer: ImageLayer, image: PDFImage): { width: numbe
     return { width: layer.height * (image.width / image.height), height: layer.height };
   }
   return { width: image.width, height: image.height };
+}
+
+/** Tolerance before a width+height pair counts as distorting the image. */
+const ASPECT_TOLERANCE = 0.02;
+
+/**
+ * Warning when both width and height are given and they stretch the image
+ * (more than 2% off its own aspect ratio); undefined otherwise.
+ */
+export function imageAspectWarning(layer: ImageLayer, natural: { width: number; height: number }): string | undefined {
+  if (layer.width === undefined || layer.height === undefined || natural.width <= 0 || natural.height <= 0) return undefined;
+  const wanted = layer.width / layer.height;
+  const actual = natural.width / natural.height;
+  if (Math.abs(wanted - actual) / actual <= ASPECT_TOLERANCE) return undefined;
+  const keepHeight = Math.round((layer.width / actual) * 10) / 10;
+  return (
+    `画像 ${layer.src} の縦横比が元画像と違います（指定 ${layer.width}×${layer.height} pt，元画像 ${natural.width}×${natural.height} px）．` +
+    `幅か高さの片方だけを指定すると縦横比が保たれます（幅 ${layer.width} pt なら高さ ${keepHeight} pt）`
+  );
 }
 
 function requireBytes(resolved: ResolvedFont): Uint8Array {

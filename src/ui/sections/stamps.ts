@@ -32,7 +32,7 @@ import type {
 } from '@/core/types';
 import { STAMP_ANCHORS } from '@/core/types';
 import { mmToPt, ptToMm, round } from '@/core/units';
-import { DEFAULT_LINE_HEIGHT_FACTOR } from '@/pdf/stamper/sanitize';
+import { DEFAULT_LINE_HEIGHT_FACTOR, imageAspectWarning, imageNaturalSize } from '@/pdf/stamper';
 import {
   BUILTIN_STAMP_TEMPLATES,
   DEFAULT_STAMP_POSITION,
@@ -445,14 +445,66 @@ function buildImageFields(ctrl: AppController, layer: ImageLayer, scheduleSave: 
     }
   });
 
+  // What the file really is: natural size, or that it's missing — and
+  // whether width+height stretch it.
+  const imageStatus = h('div', { class: 'image-status' });
+  let natural: { width: number; height: number } | undefined;
+  let checkSeq = 0;
+  async function checkImage(): Promise<void> {
+    const seq = ++checkSeq;
+    const wsNow = ctrl.state.workspace;
+    if (!wsNow) return;
+    let message: HTMLElement;
+    natural = undefined;
+    if (!layer.src) {
+      message = h('div', { class: 'alert warn' }, '画像パスが未指定です');
+    } else if (!(await wsNow.fs.exists(layer.src))) {
+      message = h('div', { class: 'alert warn' }, `⚠ ${layer.src} が見つかりません．${wsNow.config.directories.assets}/ に置いてください（このままでは生成時にエラーになります）`);
+    } else {
+      natural = imageNaturalSize(await wsNow.fs.readBytes(layer.src));
+      message = natural
+        ? h('p', { class: 'muted settings-note' }, `元画像 ${natural.width}×${natural.height} px（縦横比 ${round(natural.width / natural.height, 2)} : 1）`)
+        : h('div', { class: 'alert warn' }, `⚠ ${layer.src} は PNG / JPEG として読めません`);
+    }
+    if (seq !== checkSeq) return;
+    const aspect = natural ? imageAspectWarning(layer, natural) : undefined;
+    replaceChildren(
+      imageStatus,
+      message,
+      aspect
+        ? h(
+            'div',
+            { class: 'alert warn' },
+            `⚠ ${aspect} `,
+            button(
+              '高さを空にして縦横比を保つ',
+              () => {
+                layer.height = undefined;
+                heightInput.value = '';
+                scheduleSave();
+                void checkImage();
+              },
+              'btn btn-sm',
+            ),
+          )
+        : null,
+    );
+  }
+  const recheck = debounce(() => void checkImage(), 400);
+  srcInput.addEventListener('input', recheck);
+  assetSelect.addEventListener('change', recheck);
+
   const widthInput = optionalNumberInput(layer.width, (n) => {
     layer.width = n;
     scheduleSave();
+    recheck();
   });
   const heightInput = optionalNumberInput(layer.height, (n) => {
     layer.height = n;
     scheduleSave();
+    recheck();
   });
+  void checkImage();
 
   const opacityInput = h('input', { type: 'range', min: '0', max: '1', step: '0.05', value: String(layer.opacity ?? 1) });
   const opacityLabel = h('span', { class: 'muted' }, String(layer.opacity ?? 1));
@@ -476,13 +528,15 @@ function buildImageFields(ctrl: AppController, layer: ImageLayer, scheduleSave: 
     null,
     field('画像パス (src)', h('div', { class: 'row' }, srcInput, assetSelect)),
     h('p', { class: 'muted' }, 'assets/ に PNG/JPEG を置いてください（JSON には埋め込みません）'),
+    imageStatus,
     h(
       'div',
       { class: 'row' },
-      field('幅 (pt, 空=自然サイズ/縦横比維持)', widthInput),
-      field('高さ (pt, 空=自然サイズ/縦横比維持)', heightInput),
+      field('幅 (pt)', widthInput),
+      field('高さ (pt)', heightInput),
       field('不透明度', h('div', { class: 'row' }, opacityInput, opacityLabel)),
     ),
+    h('p', { class: 'muted settings-note' }, '幅か高さの片方だけを指定すると，もう片方は元画像の縦横比から決まります（両方空なら 1px = 1pt）．'),
     h('div', { class: 'row' }, field('dx (pt)', dxInput), field('dy (pt)', dyInput)),
   );
 }

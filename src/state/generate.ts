@@ -74,7 +74,12 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     fileName: basename(sourcePath),
     pageNumberStart,
     resolveFont,
-    resolveImage: (src) => ws.fs.readBytes(src),
+    resolveImage: async (src) => {
+      if (!src || !(await ws.fs.exists(src))) {
+        throw new Error(`画像 ${src || '(未指定)'} が見つかりません．${ws.config.directories.assets}/ に置くか，Stamps タブで画像パスを直してください`);
+      }
+      return ws.fs.readBytes(src);
+    },
   });
   warnings.push(...result.warnings);
 

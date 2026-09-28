@@ -2,7 +2,7 @@
  * Public API of the `pdf/stamper` module (see docs/ARCHITECTURE.md §3).
  * Pure: no filesystem or DOM access anywhere in this module.
  */
-export { applyStamps } from './applyStamps';
+export { applyStamps, imageAspectWarning } from './applyStamps';
 export type { StampJobInput, StampJobResult } from './types';
 export {
   measureStamp,

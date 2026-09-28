@@ -3,19 +3,17 @@
  * (`.pdf-workbench/preflight.json`) and run it against the currently
  * selected PDF (`AppState.selectedFile/selectedBytes/selectedSha256`).
  *
- * Running combines the object-based checks from `runPreflight` (page size /
- * orientation / count, and optionally the text-based margin check) with an
- * optional raster-based margin check (`checkMarginsByRaster`), rendering
- * each page via `PdfRenderer` into an offscreen canvas. Raster failures are
- * non-fatal: the object-based report is still saved even if rasterisation
- * throws.
+ * Running (one file or all of them) goes through `state/preflightBatch`:
+ * the object-based checks from `runPreflight` plus the raster margin and
+ * stamp-collision checks, rendering each page via `PdfRenderer` into an
+ * offscreen canvas.
  */
-import type { PageSize, PreflightConfig, PreflightReport, PreflightWarningCode } from '@/core/types';
-import { PAPER_SIZES_PT, toPt } from '@/core/units';
+import type { PreflightConfig, PreflightReport } from '@/core/types';
+import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
-import { checkMarginsByRaster, marginsForPage, runPreflight, summarizeReport } from '@/preflight';
+import { DEFAULT_MARGIN_TOLERANCE_PT, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
-import { loadPreflightSummary, preflightDir, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
+import { loadPreflightSummary, preflightDir, preflightOne, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { button, h, replaceChildren } from '../dom';
 
@@ -72,43 +70,6 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
 
 const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: 'OK', warning: '警告', error: 'エラー' };
 const SEVERITY_CLASS: Record<PreflightReport['result'], string> = { ok: 'ok', warning: 'warn', error: 'err' };
-
-async function runRasterMarginChecks(bytes: Uint8Array, config: PreflightConfig, report: PreflightReport): Promise<void> {
-  const margins = config.margins;
-  if (!margins) return;
-  const renderer = new PdfRenderer(bytes);
-  try {
-    await renderer.load();
-    for (let pageNumber = 1; pageNumber <= renderer.pageCount; pageNumber += 1) {
-      const pageSize: PageSize = renderer.getPageSize(pageNumber);
-      const pageMargins = marginsForPage(margins, config.marginOverrides, pageNumber, renderer.pageCount);
-      const marginsPt = {
-        top: toPt(pageMargins.top, pageMargins.unit),
-        bottom: toPt(pageMargins.bottom, pageMargins.unit),
-        left: toPt(pageMargins.left, pageMargins.unit),
-        right: toPt(pageMargins.right, pageMargins.unit),
-      };
-      const canvas = document.createElement('canvas');
-      await renderer.renderPage(pageNumber, canvas, { scale: 1 });
-      const ctx2d = canvas.getContext('2d');
-      if (!ctx2d) throw new Error('2D canvas context unavailable');
-      const imageData = ctx2d.getImageData(0, 0, canvas.width, canvas.height);
-      const codes = checkMarginsByRaster(imageData, pageSize, marginsPt);
-      if (codes.length === 0) continue;
-      const pageResult = report.pages.find((p) => p.page === pageNumber);
-      if (pageResult) {
-        const codeSet = new Set<PreflightWarningCode>(pageResult.warnings);
-        for (const c of codes) codeSet.add(c);
-        pageResult.warnings = [...codeSet];
-      }
-    }
-  } finally {
-    await renderer.destroy();
-  }
-  if (report.result === 'ok' && report.pages.some((p) => p.warnings.length > 0)) {
-    report.result = 'warning';
-  }
-}
 
 function buildRulesForm(
   ctrl: AppController,
@@ -191,6 +152,14 @@ function buildRulesForm(
     scheduleSave();
   });
 
+  const marginToleranceInput = optionalNumberInput(margins.tolerance, (n) => {
+    margins.tolerance = n !== undefined && n >= 0 ? n : undefined;
+    scheduleSave();
+  });
+  marginToleranceInput.placeholder = String(DEFAULT_MARGIN_TOLERANCE_PT);
+  marginToleranceInput.step = '0.5';
+  marginToleranceInput.min = '0';
+
   const pagesMinInput = optionalNumberInput(draft.pages?.min, (n) => {
     draft.pages = { ...draft.pages, min: n };
     scheduleSave();
@@ -226,7 +195,7 @@ function buildRulesForm(
       { class: 'row' },
       field('サイズ', sizeSelect),
       field('向き', orientationSelect),
-      field('許容誤差 (pt)', toleranceInput),
+      field('サイズの許容誤差 (pt)', toleranceInput),
     ),
     h('h3', null, '余白 (margins)'),
     h(
@@ -237,6 +206,12 @@ function buildRulesForm(
       field('左', leftInput),
       field('右', rightInput),
       field('単位', marginUnitSelect),
+      field('許容誤差 (pt)', marginToleranceInput),
+    ),
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      `余白の線からこの距離（pt）までのはみ出しは違反にしません（空欄 = ${DEFAULT_MARGIN_TOLERANCE_PT} pt）．両端揃えの行や最終行のベースラインが線にちょうど接する場合の誤検出を防ぎます．`,
     ),
     h('h3', null, 'ページ数'),
     h('div', { class: 'row' }, field('最小', pagesMinInput), field('最大', pagesMaxInput)),
@@ -399,19 +374,7 @@ export const preflightSection: Section = {
       const state = ctrl.state;
       if (!ws || !state.selectedFile || !state.selectedBytes || !state.selectedSha256) return;
       await ctrl.run('Preflight を実行', async () => {
-        const cfg = ws.preflight;
-        const report = await runPreflight(state.selectedBytes!, cfg, {
-          file: state.selectedFile!,
-          sha256: state.selectedSha256!,
-        });
-        if (cfg.checks?.marginRaster && cfg.margins) {
-          try {
-            await runRasterMarginChecks(state.selectedBytes!, cfg, report);
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            ctrl.toast('warn', `描画ベースの余白チェックに失敗しました: ${msg}`);
-          }
-        }
+        const report = await preflightOne(ctrl, state.selectedFile!, state.selectedBytes!, { rasterize: rasterizePages });
         const path = await ctrl.saveReport(report);
         ctrl.toast(report.result === 'error' ? 'err' : report.result === 'warning' ? 'warn' : 'ok', `Preflight 完了: ${summarizeReport(report)} → ${path}`);
       });

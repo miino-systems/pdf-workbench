@@ -16,8 +16,82 @@ import { getPageTextItems } from '@/pdf/reader/text';
 import { resolvePages } from '@/stamps/pages';
 import { normalizeAngle, toVisiblePoint } from '@/pdf/stamper/rotation';
 
-/** At most this many located findings are kept per page (the codes still count every hit). */
-export const MAX_FINDINGS_PER_PAGE = 40;
+/** Default for `PreflightMargins.tolerance` (pt). */
+export const DEFAULT_MARGIN_TOLERANCE_PT = 2;
+
+/** At most this many located findings are kept per problem code on a page (the codes still count every hit). */
+export const MAX_FINDINGS_PER_CODE = 15;
+
+/** How far past a margin line content may reach before it is reported (pt). */
+export function marginTolerancePt(margins: PreflightMargins): number {
+  const t = margins.tolerance;
+  return t !== undefined && Number.isFinite(t) && t >= 0 ? t : DEFAULT_MARGIN_TOLERANCE_PT;
+}
+
+/** A text run in the page's visible frame (`y` = baseline). */
+export interface PageTextBox {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Merge located findings of the same code and check that sit on
+ * consecutive lines (e.g. every line of a justified column touching the
+ * right margin) into one box, so a page gets a handful of boxes instead of
+ * one per line; then keep at most {@link MAX_FINDINGS_PER_CODE} per code, so
+ * one busy code can't crowd out the others.
+ */
+export function mergeFindings(findings: PreflightFinding[]): PreflightFinding[] {
+  const out: PreflightFinding[] = [];
+  const groups = new Map<string, PreflightFinding[]>();
+  for (const f of findings) {
+    if (!f.rect || f.source === 'stamp') {
+      out.push(f);
+      continue;
+    }
+    const key = `${f.code}|${f.source}`;
+    groups.set(key, [...(groups.get(key) ?? []), f]);
+  }
+  for (const group of groups.values()) {
+    // Top to bottom (visible frame, y up).
+    const sorted = [...group].sort((a, b) => b.rect!.y + b.rect!.height - (a.rect!.y + a.rect!.height));
+    let block: { rect: PreflightFinding['rect'] & object; first: PreflightFinding; lines: number; lineHeight: number } | undefined;
+    const flush = (): void => {
+      if (!block) return;
+      const { first, lines, rect } = block;
+      out.push({ ...first, rect, text: lines > 1 && first.text ? `${first.text} … ほか ${lines - 1} 行` : first.text });
+    };
+    for (const f of sorted) {
+      const r = f.rect!;
+      if (block) {
+        const b = block.rect;
+        const overlapX = r.x < b.x + b.width && b.x < r.x + r.width;
+        const gap = b.y - (r.y + r.height);
+        if (overlapX && gap <= Math.max(block.lineHeight, r.height) * 1.0) {
+          const x0 = Math.min(b.x, r.x);
+          const y0 = Math.min(b.y, r.y);
+          const x1 = Math.max(b.x + b.width, r.x + r.width);
+          const y1 = Math.max(b.y + b.height, r.y + r.height);
+          block.rect = { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
+          block.lines += 1;
+          continue;
+        }
+        flush();
+      }
+      block = { rect: { ...r }, first: f, lines: 1, lineHeight: r.height };
+    }
+    flush();
+  }
+  const perCode = new Map<string, number>();
+  return out.filter((f) => {
+    const n = (perCode.get(f.code) ?? 0) + 1;
+    perCode.set(f.code, n);
+    return !f.rect || n <= MAX_FINDINGS_PER_CODE;
+  });
+}
 
 export interface PreflightContext {
   /** Workspace-relative source path, stored verbatim into the report. */
@@ -28,6 +102,13 @@ export interface PreflightContext {
   now?: Date;
   /** Document loader; defaults to `pdf/reader`'s `loadPdfDocument`. Overridable for tests/mocking. */
   loadDocument?: (bytes: Uint8Array) => Promise<PDFDocumentProxy>;
+  /**
+   * Called with each page's text runs (visible frame) when the text margin
+   * check ran, so a raster check can leave text — already judged by its
+   * baseline here — out of its ink count (descenders would otherwise be
+   * flagged below the bottom margin).
+   */
+  onPageText?: (page: number, items: PageTextBox[]) => void;
 }
 
 const DEFAULT_TOLERANCE_PT = 2;
@@ -83,14 +164,17 @@ function actualOrientation(size: PageSize): Orientation {
  * finding per offending item and band.
  */
 function marginFindingsForItems(
-  items: { str: string; x: number; y: number; width: number; height: number }[],
+  items: PageTextBox[],
   pageSize: PageSize,
   margins: PreflightMargins,
 ): { codes: PreflightWarningCode[]; findings: PreflightFinding[] } {
-  const topPt = toPt(margins.top, margins.unit);
-  const bottomPt = toPt(margins.bottom, margins.unit);
-  const leftPt = toPt(margins.left, margins.unit);
-  const rightPt = toPt(margins.right, margins.unit);
+  // A margin line moved outward by the tolerance: text touching the line
+  // (justified columns, a last baseline sitting on it) is not a violation.
+  const tol = marginTolerancePt(margins);
+  const topPt = toPt(margins.top, margins.unit) - tol;
+  const bottomPt = toPt(margins.bottom, margins.unit) - tol;
+  const leftPt = toPt(margins.left, margins.unit) - tol;
+  const rightPt = toPt(margins.right, margins.unit) - tol;
 
   const codes = new Set<PreflightWarningCode>();
   const findings: PreflightFinding[] = [];
@@ -189,6 +273,7 @@ export async function runPreflight(
         const found = marginFindingsForItems(items, size, margins);
         warnings = found.codes;
         findings.push(...found.findings);
+        ctx.onPageText?.(pageNumber, items);
       }
 
       pages.push({
@@ -196,7 +281,7 @@ export async function runPreflight(
         warnings,
         errors: errors.length > 0 ? errors : undefined,
         details: { width: size.width, height: size.height, rotation: page.rotate },
-        findings: findings.length ? findings.slice(0, MAX_FINDINGS_PER_PAGE) : undefined,
+        findings: findings.length ? mergeFindings(findings) : undefined,
       });
     }
 

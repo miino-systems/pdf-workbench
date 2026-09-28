@@ -261,7 +261,7 @@ baseline = ページ上端 − offsetY − 0.8 × size
   "id": "proceedings",
   "name": "予稿集",
   "page": { "size": "A4", "orientation": "portrait", "tolerance": 2 },
-  "margins": { "top": 20, "bottom": 20, "left": 18, "right": 18, "unit": "mm" },
+  "margins": { "top": 20, "bottom": 20, "left": 18, "right": 18, "unit": "mm", "tolerance": 2 },
   "marginOverrides": [
     { "pages": { "kind": "first" }, "margins": { "top": 35 } }
   ],
@@ -270,6 +270,16 @@ baseline = ページ上端 − offsetY − 0.8 × size
 }
 ```
 
+- `page.tolerance` は**用紙サイズの判定だけ**に使う許容誤差（pt）です。
+- `margins.tolerance`（pt、既定 2）は余白の許容誤差です。余白の線からこの
+  距離までのはみ出しは違反にしません。両端揃えの行の右端や最終行の
+  ベースラインが線にちょうど接している場合の誤検出を防ぎます。
+- 文字は**ベースライン**で判定します（下余白では、最終行のベースラインが
+  線より下に出たら違反）。描画ベースのチェック（`marginRaster`）は、文字
+  ベースのチェックも有効なとき、そちらで判定した行（ディセンダを含む）を数えず、図・罫線・
+  画像など文字以外のはみ出しを見ます。
+- 一括検査の注釈付きコピーでは、同じ余白に接する連続した行を 1 つの赤枠に
+  まとめ、コメントに「… ほか N 行」と書きます。
 - `marginOverrides` は特定ページだけ `margins` の一部を上書きします。
   上の例では、先頭ページ（`{"kind":"first"}`）だけ上余白を 35mm にし、
   下・左・右は base の `margins`（20/20/18/18mm）のままです。

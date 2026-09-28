@@ -112,7 +112,19 @@ export function checkMarginsByRaster(
   return codes;
 }
 
-/** Bounding box (pixel coords, inclusive-exclusive) of ink pixels within a region, or undefined if there are fewer than `minPixels`. */
+/** A pixel-space box (canvas convention, inclusive-exclusive). */
+interface PixelBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * Bounding box (pixel coords, inclusive-exclusive) of ink pixels within a
+ * region, ignoring pixels inside any of `skip`, or undefined if there are
+ * fewer than `minPixels`.
+ */
 function inkBounds(
   image: ImageDataLike,
   x0: number,
@@ -121,7 +133,8 @@ function inkBounds(
   y1: number,
   threshold: number,
   minPixels: number,
-): { left: number; top: number; right: number; bottom: number } | undefined {
+  skip: PixelBox[] = [],
+): PixelBox | undefined {
   const left = Math.max(0, Math.floor(x0));
   const top = Math.max(0, Math.floor(y0));
   const right = Math.min(image.width, Math.ceil(x1));
@@ -133,8 +146,10 @@ function inkBounds(
   let maxY = -Infinity;
   for (let y = top; y < bottom; y++) {
     const rowStart = y * image.width;
+    const rowSkip = skip.filter((s) => y >= s.top && y < s.bottom);
     for (let x = left; x < right; x++) {
       if (luminanceAt(image.data, rowStart + x) >= threshold) continue;
+      if (rowSkip.some((s) => x >= s.left && x < s.right)) continue;
       ink++;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
@@ -143,6 +158,13 @@ function inkBounds(
     }
   }
   return ink >= minPixels ? { left: minX, top: minY, right: maxX + 1, bottom: maxY + 1 } : undefined;
+}
+
+export interface MarginInkOptions extends RasterCheckOptions {
+  /** Ink up to this far (pt) past a margin line is allowed. Default 0. */
+  tolerance?: number;
+  /** Areas (PDF visible space, pt) whose ink is not counted, e.g. text already checked by the text margin check. */
+  ignore?: Rect[];
 }
 
 /**
@@ -154,23 +176,32 @@ export function findMarginInkByRaster(
   imageData: ImageDataLike,
   pageSize: PageSize,
   margins: MarginsPt,
-  opts: RasterCheckOptions = {},
+  opts: MarginInkOptions = {},
 ): PreflightFinding[] {
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
   const minPixels = opts.minPixels ?? DEFAULT_MIN_PIXELS;
+  const tol = Math.max(0, opts.tolerance ?? 0);
   const sx = imageData.width / pageSize.width;
   const sy = imageData.height / pageSize.height;
   const w = imageData.width;
   const hgt = imageData.height;
+  // Each band ends `tol` short of its margin line.
+  const [top, bottom, left, right] = [margins.top, margins.bottom, margins.left, margins.right].map((m) => Math.max(0, m - tol));
   const bands: [PreflightWarningCode, number, number, number, number][] = [
-    ['TOP_MARGIN', 0, 0, w, margins.top * sy],
-    ['BOTTOM_MARGIN', 0, hgt - margins.bottom * sy, w, hgt],
-    ['LEFT_MARGIN', 0, 0, margins.left * sx, hgt],
-    ['RIGHT_MARGIN', w - margins.right * sx, 0, w, hgt],
+    ['TOP_MARGIN', 0, 0, w, top * sy],
+    ['BOTTOM_MARGIN', 0, hgt - bottom * sy, w, hgt],
+    ['LEFT_MARGIN', 0, 0, left * sx, hgt],
+    ['RIGHT_MARGIN', w - right * sx, 0, w, hgt],
   ];
+  const skip: PixelBox[] = (opts.ignore ?? []).map((r) => ({
+    left: Math.floor(r.x * sx),
+    right: Math.ceil((r.x + r.width) * sx),
+    top: Math.floor((pageSize.height - (r.y + r.height)) * sy),
+    bottom: Math.ceil((pageSize.height - r.y) * sy),
+  }));
   const findings: PreflightFinding[] = [];
   for (const [code, x0, y0, x1, y1] of bands) {
-    const b = inkBounds(imageData, x0, y0, x1, y1, threshold, minPixels);
+    const b = inkBounds(imageData, x0, y0, x1, y1, threshold, minPixels, skip);
     if (!b) continue;
     const rect: Rect = {
       x: b.left / sx,

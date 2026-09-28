@@ -46,7 +46,7 @@
         "tolerance": {
           "type": "number",
           "minimum": 0,
-          "description": "ページサイズ比較の許容誤差（pt、既定 2）。"
+          "description": "ページサイズ比較の許容誤差（pt、既定 2）。（用紙サイズの判定にのみ使う。余白の許容誤差は margins.tolerance）"
         }
       }
     },
@@ -138,6 +138,11 @@
             "in"
           ],
           "description": "top/bottom/left/right の単位。"
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "余白の線からこの距離（pt、unit によらず pt）までのはみ出しは違反にしない。既定 2。page.tolerance（用紙サイズの許容誤差）とは別。"
         }
       }
     },

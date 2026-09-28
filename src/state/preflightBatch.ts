@@ -5,6 +5,8 @@
  * listing all files. The folder is emptied first, so afterwards it holds
  * exactly the PDFs that still need attention, plus passed PDFs whose copy
  * only marks phantom findings (invisible margin content, for reference).
+ * PDFs marked "検査スルー" (`PreflightConfig.skipFiles`) are not checked:
+ * they are listed as `skipped` and get no copy.
  *
  * Rendering pages (for the raster margin and stamp-collision checks, and for
  * telling invisible margin text from real text) needs
@@ -64,7 +66,7 @@ export type Rasterizer = (bytes: Uint8Array) => AsyncIterable<PageRaster>;
 
 export interface PreflightBatchItem {
   file: string;
-  result: PreflightReport['result'] | 'failed';
+  result: PreflightReport['result'] | 'failed' | 'skipped';
   summary: string;
   /** Workspace path of the annotated copy (only for files with problems or phantom findings). */
   annotated?: string;
@@ -82,13 +84,20 @@ export interface PreflightBatchResult {
   ranAt: string;
   configId: string;
   items: PreflightBatchItem[];
-  counts: { ok: number; warning: number; error: number; failed: number };
+  counts: { ok: number; warning: number; error: number; failed: number; skipped: number };
 }
 
 export const DEFAULT_PREFLIGHT_DIR = 'preflight';
 
 export function preflightDir(ctrl: AppController): string {
   return ctrl.requireWorkspace().config.directories.preflight ?? DEFAULT_PREFLIGHT_DIR;
+}
+
+const SKIPPED_SUMMARY = '検査スルー（PDF タブで指定）';
+
+/** Is `file` marked "検査スルー" (left out of the batch check)? */
+export function isPreflightSkipped(config: PreflightConfig, file: string): boolean {
+  return config.skipFiles?.includes(file) ?? false;
 }
 
 function addFindings(report: PreflightReport, page: number, found: PreflightFinding[]): void {
@@ -310,6 +319,10 @@ export async function runPreflightBatch(
       cancelled = true;
       break;
     }
+    if (isPreflightSkipped(config, file)) {
+      items.push({ file, result: 'skipped', summary: SKIPPED_SUMMARY });
+      continue;
+    }
     const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
     try {
       const bytes = await ws.fs.readBytes(file);
@@ -344,8 +357,8 @@ export async function runPreflightBatch(
 }
 
 function countResults(items: PreflightBatchItem[]): PreflightBatchResult['counts'] {
-  const counts = { ok: 0, warning: 0, error: 0, failed: 0 };
-  for (const it of items) counts[it.result === 'failed' ? 'failed' : it.result] += 1;
+  const counts = { ok: 0, warning: 0, error: 0, failed: 0, skipped: 0 };
+  for (const it of items) counts[it.result] += 1;
   return counts;
 }
 
@@ -364,7 +377,8 @@ async function writeSummary(ctrl: AppController, result: PreflightBatchResult): 
  * "1 件だけ検査": check one PDF like the batch does and keep the preflight
  * folder consistent — write its annotated review copy when it has problems
  * (remove a stale one when it passes) and, when a batch summary exists,
- * update that file's row in it.
+ * update that file's row in it. A file marked "検査スルー" is checked
+ * all the same (it was asked for by name) but leaves the folder alone.
  */
 export async function preflightSingle(
   ctrl: AppController,
@@ -376,6 +390,7 @@ export async function preflightSingle(
   const dir = preflightDir(ctrl);
   const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
   const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize });
+  if (isPreflightSkipped(ws.preflight, file)) return { report };
   let annotated: string | undefined;
   if (report.result !== 'ok' || hasPhantomFindings(report)) {
     await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, ws.preflight));
@@ -400,10 +415,45 @@ export async function preflightSingle(
 export async function loadPreflightSummary(ctrl: AppController): Promise<PreflightBatchResult | undefined> {
   const ws = ctrl.requireWorkspace();
   try {
-    return JSON.parse(await ws.fs.readText(`${preflightDir(ctrl)}/summary.json`)) as PreflightBatchResult;
+    const summary = JSON.parse(await ws.fs.readText(`${preflightDir(ctrl)}/summary.json`)) as PreflightBatchResult;
+    // Summaries from before "検査スルー" have no `skipped` count.
+    summary.counts = countResults(summary.items);
+    return summary;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Mark / unmark `file` as "検査スルー" (PDF tab). The last batch summary
+ * follows along so the preflight folder stays consistent: a skipped file's
+ * row becomes `skipped` and its annotated copy is removed; an unskipped
+ * file's row is dropped (it has not been checked yet).
+ */
+export async function setPreflightSkipped(ctrl: AppController, file: string, skip: boolean): Promise<void> {
+  const ws = ctrl.requireWorkspace();
+  const current = ws.preflight.skipFiles ?? [];
+  if (current.includes(file) === skip) return;
+  const skipFiles = skip ? [...current, file].sort() : current.filter((f) => f !== file);
+  const { skipFiles: _drop, ...rest } = ws.preflight;
+  await ctrl.updatePreflightConfig(skipFiles.length ? { ...rest, skipFiles } : rest);
+  if (isPreflightSkipped(ws.preflight, file) !== skip) return; // not saved (edited externally)
+
+  const summary = await loadPreflightSummary(ctrl);
+  if (!summary) return;
+  const i = summary.items.findIndex((it) => it.file === file);
+  if (skip) {
+    const annotated = summary.items[i]?.annotated ?? ctrl.preflightCopyPathFor(file, summary.dir);
+    if (await ws.fs.exists(annotated)) await ws.fs.remove(annotated);
+    const item: PreflightBatchItem = { file, result: 'skipped', summary: SKIPPED_SUMMARY };
+    if (i >= 0) summary.items[i] = item;
+    else summary.items.push(item);
+  } else {
+    if (i < 0) return;
+    summary.items.splice(i, 1);
+  }
+  summary.counts = countResults(summary.items);
+  await writeSummary(ctrl, summary);
 }
 
 /** Every problem code of a report in plain Japanese, for listings. */

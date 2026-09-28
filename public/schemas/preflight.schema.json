@@ -84,6 +84,13 @@
         "$ref": "#/$defs/PreflightTextRule"
       }
     },
+    "skipFiles": {
+      "type": "array",
+      "description": "一括検査でスルーする PDF の Workspace 内パス（例: papers/9002.pdf）。誤検出が分かっている PDF 用。PDF タブで指定できる。",
+      "items": {
+        "type": "string"
+      }
+    },
     "checks": {
       "type": "object",
       "description": "各チェックの有効/無効。",

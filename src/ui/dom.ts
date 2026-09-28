@@ -52,6 +52,38 @@ export function replaceChildren(el: Element, ...children: Child[]): void {
 }
 
 /** A text button, optionally with a leading icon. */
+/**
+ * Rebuild part of the page without losing the user's place: if focus was on
+ * an element inside `container` carrying `data-focus-key`, the element with
+ * the same key after `rebuild()` gets the focus back, together with any text
+ * typed into it and the caret position.
+ */
+export function keepFocus(container: HTMLElement, rebuild: () => void): void {
+  const active = document.activeElement;
+  const key = active instanceof HTMLElement && container.contains(active) ? active.dataset.focusKey : undefined;
+  const field = active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement ? active : undefined;
+  const value = field?.value;
+  let caret: [number | null, number | null] | undefined;
+  try {
+    caret = field ? [field.selectionStart, field.selectionEnd] : undefined;
+  } catch {
+    caret = undefined; // number inputs have no selection
+  }
+  rebuild();
+  if (!key) return;
+  const next = [...container.querySelectorAll<HTMLElement>('[data-focus-key]')].find((el) => el.dataset.focusKey === key);
+  if (!next) return;
+  if (field && value !== undefined && (next instanceof HTMLInputElement || next instanceof HTMLTextAreaElement) && next.type === field.type) {
+    next.value = value;
+    try {
+      if (caret && caret[0] !== null && caret[1] !== null) next.setSelectionRange(caret[0], caret[1]);
+    } catch {
+      /* no selection API on this input type */
+    }
+  }
+  next.focus({ preventScroll: true });
+}
+
 export function button(label: string, onClick: () => void, cls = 'btn', iconName?: IconName): HTMLButtonElement {
   return h('button', { class: cls, type: 'button', on: { click: onClick } }, iconName ? icon(iconName) : null, label);
 }

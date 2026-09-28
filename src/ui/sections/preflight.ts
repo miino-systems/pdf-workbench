@@ -13,7 +13,7 @@ import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
 import { DEFAULT_MARGIN_TOLERANCE_PT, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
-import { loadPreflightSummary, preflightDir, preflightOne, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
+import { loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { button, h, replaceChildren } from '../dom';
 
@@ -71,11 +71,18 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
 const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: 'OK', warning: '警告', error: 'エラー' };
 const SEVERITY_CLASS: Record<PreflightReport['result'], string> = { ok: 'ok', warning: 'warn', error: 'err' };
 
+/** Lets the section trigger a save and recognise its own saves coming back. */
+interface SaveRef {
+  save: () => void;
+  /** JSON of the config most recently handed to `updatePreflightConfig`. */
+  savingJson?: string;
+}
+
 function buildRulesForm(
   ctrl: AppController,
   draft: PreflightConfig,
   statusEl: HTMLElement,
-  saveNowRef: { save: () => void },
+  saveNowRef: SaveRef,
 ): HTMLElement {
   const debouncedSave = debounce(() => void doSave(), 400);
   function scheduleSave(): void {
@@ -84,7 +91,11 @@ function buildRulesForm(
   }
   async function doSave(): Promise<void> {
     statusEl.textContent = '保存中…';
-    await ctrl.updatePreflightConfig(structuredClone(draft));
+    const toSave = structuredClone(draft);
+    // Our own save coming back through the store must not rebuild the form
+    // (that would drop the focus and the caret while the user is typing).
+    saveNowRef.savingJson = JSON.stringify(toSave);
+    await ctrl.updatePreflightConfig(toSave);
     statusEl.textContent = '保存しました';
   }
   saveNowRef.save = () => void doSave();
@@ -405,16 +416,26 @@ export const preflightSection: Section = {
 
     let draft: PreflightConfig | undefined;
     let savedJson: string | undefined;
-    const saveNowRef: { save: () => void } = { save: () => undefined };
+    const saveNowRef: SaveRef = { save: () => undefined };
+
+    /** The single check's review copy (undefined path when the file passed). */
+    let lastAnnotated: { file: string; path?: string } | undefined;
 
     async function runCheck(): Promise<void> {
       const ws = ctrl.state.workspace;
       const state = ctrl.state;
       if (!ws || !state.selectedFile || !state.selectedBytes || !state.selectedSha256) return;
       await ctrl.run('Preflight を実行', async () => {
-        const report = await preflightOne(ctrl, state.selectedFile!, state.selectedBytes!, { rasterize: rasterizePages });
-        const path = await ctrl.saveReport(report);
-        ctrl.toast(report.result === 'error' ? 'err' : report.result === 'warning' ? 'warn' : 'ok', `Preflight 完了: ${summarizeReport(report)} → ${path}`);
+        const { report, annotated } = await preflightSingle(ctrl, state.selectedFile!, state.selectedBytes!, { rasterize: rasterizePages });
+        lastAnnotated = { file: report.file, path: annotated };
+        await ctrl.saveReport(report);
+        batch = await loadPreflightSummary(ctrl);
+        renderBatch(ctrl.state);
+        ctrl.toast(
+          report.result === 'error' ? 'err' : report.result === 'warning' ? 'warn' : 'ok',
+          `Preflight 完了: ${summarizeReport(report)}${annotated ? `．注釈付きのコピーを ${annotated} に保存しました` : ''}`,
+          8000,
+        );
       });
     }
 
@@ -443,7 +464,15 @@ export const preflightSection: Section = {
       );
       replaceChildren(
         resultBox,
-        h('div', { class: 'row' }, badge, h('span', null, summarizeReport(report))),
+        h(
+          'div',
+          { class: 'row' },
+          badge,
+          h('span', null, summarizeReport(report)),
+          lastAnnotated?.file === report.file && lastAnnotated.path
+            ? button('注釈付き PDF を開く', () => void openInTab(lastAnnotated!.path!), 'btn btn-sm', 'file-text')
+            : '',
+        ),
         h('p', { class: 'muted' }, `file: ${report.file} / sha256: ${report.sha256} / ranAt: ${report.ranAt}`),
         report.documentWarnings.length
           ? h('div', { class: 'alert warn' }, `文書レベルの警告: ${report.documentWarnings.join(', ')}`)
@@ -466,11 +495,16 @@ export const preflightSection: Section = {
 
     function applyState(state: AppState): void {
       const ws = state.workspace;
-      replaceChildren(root, ws ? gridEl : noWorkspace);
+      const view = ws ? gridEl : noWorkspace;
+      // Swap only when needed: re-attaching the form would drop the focus while typing.
+      if (root.firstChild !== view) replaceChildren(root, view);
       if (!ws) return;
 
       const cfgJson = JSON.stringify(ws.preflight);
-      if (!draft || cfgJson !== savedJson) {
+      if (draft && cfgJson !== savedJson && cfgJson === saveNowRef.savingJson) {
+        // The config we just saved: the form already shows it.
+        savedJson = cfgJson;
+      } else if (!draft || cfgJson !== savedJson) {
         draft = cloneConfig(ws.preflight);
         savedJson = cfgJson;
         renderForm();

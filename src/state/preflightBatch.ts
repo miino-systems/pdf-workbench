@@ -230,18 +230,66 @@ export async function runPreflightBatch(
   }
   if (!cancelled) opts.onProgress?.(files.length, files.length);
 
-  const counts = { ok: 0, warning: 0, error: 0, failed: 0 };
-  for (const it of items) counts[it.result === 'failed' ? 'failed' : it.result] += 1;
+  const counts = countResults(items);
   const result: PreflightBatchResult = { dir, ranAt: formatTs(ranAt), configId: config.id, items, counts, total: files.length, cancelled };
 
-  const header = 'file,result,pages,problems,annotated';
-  const rows = items.map((it) =>
-    [it.file, it.result, it.pageCount, it.summary, it.annotated ?? ''].map(csvCell).join(','),
-  );
-  await ws.fs.writeText(`${dir}/summary.csv`, `\uFEFF${[header, ...rows].join('\n')}\n`);
-  await ws.fs.writeText(`${dir}/summary.json`, `${JSON.stringify(result, null, 2)}\n`);
+  await writeSummary(ctrl, result);
   await ctrl.log(EVENT_TYPES.preflightBatch, { dir, files: items.length, total: files.length, ...(cancelled ? { cancelled } : {}), ...counts });
   return result;
+}
+
+function countResults(items: PreflightBatchItem[]): PreflightBatchResult['counts'] {
+  const counts = { ok: 0, warning: 0, error: 0, failed: 0 };
+  for (const it of items) counts[it.result === 'failed' ? 'failed' : it.result] += 1;
+  return counts;
+}
+
+/** Write `summary.csv` / `summary.json` for `result` into its folder. */
+async function writeSummary(ctrl: AppController, result: PreflightBatchResult): Promise<void> {
+  const ws = ctrl.requireWorkspace();
+  const header = 'file,result,pages,problems,annotated';
+  const rows = result.items.map((it) =>
+    [it.file, it.result, it.pageCount, it.summary, it.annotated ?? ''].map(csvCell).join(','),
+  );
+  await ws.fs.writeText(`${result.dir}/summary.csv`, `\uFEFF${[header, ...rows].join('\n')}\n`);
+  await ws.fs.writeText(`${result.dir}/summary.json`, `${JSON.stringify(result, null, 2)}\n`);
+}
+
+/**
+ * "1 件だけ検査": check one PDF like the batch does and keep the preflight
+ * folder consistent — write its annotated review copy when it has problems
+ * (remove a stale one when it passes) and, when a batch summary exists,
+ * update that file's row in it.
+ */
+export async function preflightSingle(
+  ctrl: AppController,
+  file: string,
+  bytes: Uint8Array,
+  opts: { rasterize?: Rasterizer } = {},
+): Promise<{ report: PreflightReport; annotated?: string }> {
+  const ws = ctrl.requireWorkspace();
+  const dir = preflightDir(ctrl);
+  const annotatedPath = `${dir}/${stripExtension(basename(file))}_preflight.pdf`;
+  const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize });
+  let annotated: string | undefined;
+  if (report.result !== 'ok') {
+    await ws.fs.mkdirp(dir);
+    await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, ws.preflight));
+    annotated = annotatedPath;
+  } else if (await ws.fs.exists(annotatedPath)) {
+    await ws.fs.remove(annotatedPath);
+  }
+
+  const summary = await loadPreflightSummary(ctrl);
+  if (summary) {
+    const item: PreflightBatchItem = { file, result: report.result, summary: summarizeReport(report), pageCount: report.pageCount, annotated };
+    const i = summary.items.findIndex((it) => it.file === file);
+    if (i >= 0) summary.items[i] = { ...summary.items[i], ...item, annotated };
+    else summary.items.push(item);
+    summary.counts = countResults(summary.items);
+    await writeSummary(ctrl, summary);
+  }
+  return { report, annotated };
 }
 
 /** The last batch summary saved in the preflight folder, if any. */

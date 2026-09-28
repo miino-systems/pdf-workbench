@@ -2,11 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { PreflightConfig } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import {
-  applyPreflightPreset,
   checkMarginsByRaster,
   checkStampCollision,
   marginsForPage,
-  PREFLIGHT_PRESETS,
   reportFileName,
   runPreflight,
   type ImageDataLike,
@@ -196,58 +194,77 @@ describe('preflight: per-page margin overrides', () => {
   });
 });
 
-describe('preflight: built-in presets', () => {
-  it('has a short, non-empty list of presets with unique ids', () => {
-    expect(PREFLIGHT_PRESETS.length).toBeGreaterThanOrEqual(3);
-    expect(PREFLIGHT_PRESETS.length).toBeLessThanOrEqual(4);
-    const ids = PREFLIGHT_PRESETS.map((p) => p.id);
-    expect(new Set(ids).size).toBe(ids.length);
-  });
-
-  it('every preset resolves to a known paper size and complete, positive margins', () => {
-    for (const preset of PREFLIGHT_PRESETS) {
-      expect(preset.config.page?.size).toBeDefined();
-      expect(PAPER_SIZES_PT[preset.config.page!.size!]).toBeDefined();
-      const margins = preset.config.margins;
-      expect(margins).toBeDefined();
-      for (const side of ['top', 'bottom', 'left', 'right'] as const) {
-        expect(margins![side]).toBeGreaterThan(0);
-      }
-    }
-  });
-
-  it('applyPreflightPreset enables all checks, records the preset id, and keeps id/name/pages', () => {
-    const current = baseConfig({ id: 'my-config', name: 'My config', pages: { max: 8 } });
-    const preset = PREFLIGHT_PRESETS.find((p) => p.id === 'ieee-conference-letter')!;
-    const applied = applyPreflightPreset(preset, current);
-
-    expect(applied.id).toBe('my-config');
-    expect(applied.name).toBe('My config');
-    expect(applied.pages).toEqual({ max: 8 });
-    expect(applied.preset).toBe('ieee-conference-letter');
-    expect(applied.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true });
-    expect(applied.page?.size).toBe('Letter');
-    expect(applied.margins?.unit).toBe('in');
-  });
-
-  it('the IEEE preset carries a first-page-only top margin override (1in vs 0.75in elsewhere)', () => {
-    const preset = PREFLIGHT_PRESETS.find((p) => p.id === 'ieee-conference-letter')!;
-    expect(preset.config.margins?.top).toBeCloseTo(0.75);
-    expect(preset.config.marginOverrides).toEqual([{ pages: { kind: 'first' }, margins: { top: 1 } }]);
-  });
-
-  it('presets that model a real venue carry a note pointing back to the organiser guidelines', () => {
-    const generic = PREFLIGHT_PRESETS.find((p) => p.id === 'generic-a4-25mm')!;
-    expect(generic.note).toBeUndefined();
-    for (const preset of PREFLIGHT_PRESETS.filter((p) => p.id !== 'generic-a4-25mm')) {
-      expect(preset.note).toBeTruthy();
-    }
-  });
-});
-
 describe('preflight/report: reportFileName', () => {
   it('builds <basename>.<YYYYMMDDTHHMMSS>.json from a workspace-relative path', () => {
     const date = new Date(2026, 8, 14, 10, 30, 12); // 2026-09-14 10:30:12 local
     expect(reportFileName('papers/paper001.pdf', date)).toBe('paper001.20260914T103012.json');
+  });
+});
+
+describe('preflight: margin tolerance and merged findings', () => {
+  const RIGHT = 20; // mm
+  const rightLinePt = A4.width - (RIGHT * 72) / 25.4;
+
+  async function check(x: number, tolerance?: number) {
+    const bytes = await buildFixturePdf([{ size: [A4.width, A4.height], texts: [{ text: 'Justified line', x, y: 500 }] }]);
+    return runPreflight(
+      bytes,
+      baseConfig({ margins: { top: 20, bottom: 20, left: 20, right: RIGHT, unit: 'mm', tolerance }, checks: { marginText: true } }),
+      { file: 'papers/t.pdf', sha256: 'sha256:x' },
+    );
+  }
+
+  it('ignores text touching the margin line within the tolerance (default 2 pt)', async () => {
+    // pdf.js measures the run itself: learn its width from a run that clearly
+    // crosses the line, then place its right edge exactly 1 pt past the line.
+    const probe = (await check(rightLinePt - 10, 0)).pages[0].findings?.[0];
+    expect(probe?.code).toBe('RIGHT_MARGIN');
+    const width = probe!.rect!.width;
+    const x = rightLinePt - width + 1;
+    expect((await check(x)).pages[0].warnings).toEqual([]);
+    expect((await check(x, 0)).pages[0].warnings).toEqual(['RIGHT_MARGIN']);
+    expect((await check(x + 3)).pages[0].warnings).toEqual(['RIGHT_MARGIN']);
+  });
+
+  it('merges consecutive lines into one box and caps findings per code', async () => {
+    const { mergeFindings, MAX_FINDINGS_PER_CODE } = await import('@/preflight');
+    const lines = Array.from({ length: 30 }, (_, i) => ({
+      code: 'RIGHT_MARGIN' as const,
+      source: 'text' as const,
+      rect: { x: 300, y: 600 - i * 12, width: 240, height: 10 },
+      text: `line ${i}`,
+    }));
+    const merged = mergeFindings([...lines, { code: 'LEFT_MARGIN', source: 'text', rect: { x: 10, y: 400, width: 50, height: 10 }, text: 'left' }]);
+    expect(merged).toHaveLength(2);
+    const right = merged.find((f) => f.code === 'RIGHT_MARGIN')!;
+    expect(right.text).toBe('line 0 … ほか 29 行');
+    expect(right.rect).toEqual({ x: 300, y: 600 - 29 * 12, width: 240, height: 29 * 12 + 10 });
+
+    // Far-apart hits stay separate, but one code never crowds out another.
+    const scattered = Array.from({ length: 40 }, (_, i) => ({
+      code: 'RIGHT_MARGIN' as const,
+      source: 'text' as const,
+      rect: { x: 300, y: 800 - i * 60, width: 240, height: 10 },
+    }));
+    const capped = mergeFindings([...scattered, { code: 'LEFT_MARGIN', source: 'raster', rect: { x: 0, y: 0, width: 5, height: 5 } }]);
+    expect(capped.filter((f) => f.code === 'RIGHT_MARGIN')).toHaveLength(MAX_FINDINGS_PER_CODE);
+    expect(capped.some((f) => f.code === 'LEFT_MARGIN')).toBe(true);
+  });
+});
+
+describe('preflight: raster margin ink with tolerance and ignored areas', () => {
+  it('skips ink within the tolerance and inside ignored rects', async () => {
+    const { findMarginInkByRaster } = await import('@/preflight');
+    // 100×100 pt page at 1 px/pt, white, with a dark block reaching 2 pt past the bottom margin line (margin 10 pt).
+    const w = 100;
+    const data = new Uint8ClampedArray(w * w * 4).fill(255);
+    for (let y = 89; y < 92; y++) for (let x = 40; x < 43; x++) data.set([0, 0, 0, 255], (y * w + x) * 4);
+    const image = { data, width: w, height: w };
+    const page = { width: 100, height: 100 };
+    const margins = { top: 10, bottom: 10, left: 10, right: 10 };
+    // Rows 89..91 = pdf y 9..11: rows 90–91 lie up to 2 pt below the bottom line (y = 10).
+    expect(findMarginInkByRaster(image, page, margins).map((f) => f.code)).toEqual(['BOTTOM_MARGIN']);
+    expect(findMarginInkByRaster(image, page, margins, { tolerance: 2 })).toEqual([]);
+    expect(findMarginInkByRaster(image, page, margins, { ignore: [{ x: 39, y: 7, width: 5, height: 5 }] })).toEqual([]);
   });
 });

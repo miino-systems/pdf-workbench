@@ -13,7 +13,7 @@
 import type { PageSize, PreflightConfig, PreflightReport, PreflightWarningCode } from '@/core/types';
 import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
-import { PREFLIGHT_PRESETS, applyPreflightPreset, checkMarginsByRaster, marginsForPage, runPreflight, summarizeReport } from '@/preflight';
+import { checkMarginsByRaster, marginsForPage, runPreflight, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
 import { loadPreflightSummary, preflightDir, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
@@ -115,8 +115,6 @@ function buildRulesForm(
   draft: PreflightConfig,
   statusEl: HTMLElement,
   saveNowRef: { save: () => void },
-  originalJson: string,
-  rerenderForm: () => void,
 ): HTMLElement {
   const debouncedSave = debounce(() => void doSave(), 400);
   function scheduleSave(): void {
@@ -129,43 +127,6 @@ function buildRulesForm(
     statusEl.textContent = '保存しました';
   }
   saveNowRef.save = () => void doSave();
-
-  const presetSelect = h('select', {});
-  presetSelect.append(h('option', { value: '' }, 'ひな形を選択…'));
-  for (const preset of PREFLIGHT_PRESETS) presetSelect.append(h('option', { value: preset.id }, preset.label));
-  const presetNote = h('p', { class: 'muted' });
-  function updatePresetNote(): void {
-    const preset = PREFLIGHT_PRESETS.find((p) => p.id === presetSelect.value);
-    presetNote.textContent = preset?.note ?? '';
-  }
-  presetSelect.addEventListener('change', updatePresetNote);
-  updatePresetNote();
-
-  const appliedFromLabel = h('p', { class: 'muted' });
-  if (draft.preset) {
-    const appliedFrom = PREFLIGHT_PRESETS.find((p) => p.id === draft.preset);
-    appliedFromLabel.textContent = `適用元のひな形: ${appliedFrom?.label ?? draft.preset}`;
-  }
-
-  const applyPresetButton = button(
-    'ひな形を適用',
-    () => {
-      const preset = PREFLIGHT_PRESETS.find((p) => p.id === presetSelect.value);
-      if (!preset) {
-        ctrl.toast('warn', 'ひな形を選択してください。');
-        return;
-      }
-      const isDirty = JSON.stringify(draft) !== originalJson;
-      if (isDirty && !confirm(`現在の余白・ページ設定を「${preset.label}」で置き換えます。未保存の変更があれば失われます。よろしいですか？`)) {
-        return;
-      }
-      Object.assign(draft, applyPreflightPreset(preset, draft));
-      // Re-render the whole form so every input reflects the new draft
-      // values; saving itself is left to the existing 保存 button/debounce.
-      rerenderForm();
-    },
-    'btn btn-sm',
-  );
 
   const idInput = h('input', { type: 'text', value: draft.id });
   idInput.addEventListener('input', () => {
@@ -258,10 +219,6 @@ function buildRulesForm(
   return h(
     'div',
     null,
-    h('h3', null, 'ひな形 (プリセット)'),
-    h('div', { class: 'row' }, field('ひな形', presetSelect), applyPresetButton),
-    presetNote,
-    appliedFromLabel,
     h('div', { class: 'row' }, field('id', idInput), field('名前', nameInput)),
     h('h3', null, 'ページ'),
     h(
@@ -499,17 +456,11 @@ export const preflightSection: Section = {
       );
     }
 
-    /**
-     * (Re)build the rules form for the current `draft`. `markDirty` is set
-     * when the rebuild comes from applying a preset (an in-memory change
-     * that has not gone through `updatePreflightConfig` yet) rather than
-     * from a freshly loaded/saved workspace config, so the status label
-     * reflects that there is something to save.
-     */
-    function renderForm(markDirty: boolean): void {
+    /** (Re)build the rules form for the current `draft`. */
+    function renderForm(): void {
       if (!draft) return;
-      const statusEl = h('span', { class: 'muted' }, markDirty ? '未保存の変更（ひな形を適用）…' : '');
-      replaceChildren(rulesFormBox, buildRulesForm(ctrl, draft, statusEl, saveNowRef, savedJson ?? '', () => renderForm(true)));
+      const statusEl = h('span', { class: 'muted' });
+      replaceChildren(rulesFormBox, buildRulesForm(ctrl, draft, statusEl, saveNowRef));
     }
 
     function applyState(state: AppState): void {
@@ -521,7 +472,7 @@ export const preflightSection: Section = {
       if (!draft || cfgJson !== savedJson) {
         draft = cloneConfig(ws.preflight);
         savedJson = cfgJson;
-        renderForm(false);
+        renderForm();
       }
       rawJsonBox.textContent = JSON.stringify(ws.preflight, null, 2);
 

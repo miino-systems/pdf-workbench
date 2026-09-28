@@ -258,9 +258,8 @@ baseline = ページ上端 − offsetY − 0.8 × size
 {
   "$schema": "https://miino-systems.github.io/pdf-workbench/schemas/preflight.schema.json",
   "version": 1,
-  "id": "nolta-a1",
-  "name": "NOLTA A1 セッション",
-  "preset": "proceedings-strict",
+  "id": "proceedings",
+  "name": "予稿集",
   "page": { "size": "A4", "orientation": "portrait", "tolerance": 2 },
   "margins": { "top": 20, "bottom": 20, "left": 18, "right": 18, "unit": "mm" },
   "marginOverrides": [
@@ -271,9 +270,6 @@ baseline = ページ上端 − offsetY − 0.8 × size
 }
 ```
 
-- `preset` は `src/preflight/presets.ts` の `PREFLIGHT_PRESETS`（ひな形）から
-  作成した場合、その id を記録するだけの項目です。以後の編集で自動的に
-  消えたり、再適用されたりはしません。手で書く設定では省略できます。
 - `marginOverrides` は特定ページだけ `margins` の一部を上書きします。
   上の例では、先頭ページ（`{"kind":"first"}`）だけ上余白を 35mm にし、
   下・左・右は base の `margins`（20/20/18/18mm）のままです。
@@ -282,10 +278,6 @@ baseline = ページ上端 − offsetY − 0.8 × size
   要素ほど優先**（辺ごとに）されます。
   この上書きは余白チェック（`marginText` / `marginRaster`）と、一括検査の
   注釈付きコピーに描く枠の両方に使われます。
-- Preflight タブの「ひな形」（`src/preflight/presets.ts` の
-  `PREFLIGHT_PRESETS`）には、汎用 A4（25mm）/ IEICE 論文誌 /
-  IEEE conference（US Letter、1 ページ目の上余白 1in）があります。特定の学会向けの
-  数値は目安なので、主催者の執筆要項で確認してください。
 - `checks`:
   - `marginText`: PDF のテキストオブジェクト座標に基づく余白チェック。
   - `marginRaster`: ラスタライズした画像に基づく余白チェック
@@ -293,7 +285,7 @@ baseline = ページ上端 − offsetY − 0.8 × size
   - `stampCollision`: スタンプが既存の描画と重ならないかのラスタベースの
     チェック。新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
     は 3 つとも `true` です（以前に作った Workspace の preflight.json は
-    そのまま）。ひな形を適用した場合も 3 つとも `true` になります。
+    そのまま）。
 
 ---
 

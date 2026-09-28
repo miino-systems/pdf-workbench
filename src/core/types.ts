@@ -441,14 +441,6 @@ export interface PreflightConfig {
   version: number;
   id: string;
   name?: string;
-  /**
-   * Id of the built-in preset (`preflight/presets.ts` `PREFLIGHT_PRESETS`)
-   * this config was last applied from, e.g. `'ieee-conference'`. Purely
-   * informational (shown in the UI as "適用元"); editing the config after
-   * applying a preset does not clear it, so treat it as a starting-point
-   * label rather than a guarantee the values still match that preset.
-   */
-  preset?: string;
   page?: {
     /** e.g. `A4`, `Letter`; see core/units.ts PAPER_SIZES_PT. */
     size?: string;

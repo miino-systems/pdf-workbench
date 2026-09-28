@@ -4,49 +4,96 @@
   "title": "PDF Workbench: preflight.json",
   "description": "PDF を出力前にチェックするルール（ページサイズ・余白・ページ数・スタンプ衝突）。",
   "type": "object",
-  "required": ["version", "id"],
+  "required": [
+    "version",
+    "id"
+  ],
   "properties": {
-    "$schema": { "type": "string", "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。" },
-    "version": { "type": "integer", "minimum": 1, "description": "preflight.json のフォーマットバージョン（現在は 1）。" },
-    "id": { "type": "string", "description": "このルールの識別子。preflight レポートの `configId` に記録される。" },
-    "name": { "type": "string", "description": "表示名。" },
-    "preset": {
+    "$schema": {
       "type": "string",
-      "description": "src/preflight/presets.ts のひな形 (PREFLIGHT_PRESETS) から作成した場合、その id を記録する（記録のみで、以後の再適用や自動追従はしない）。手で書いた設定では省略してよい。"
+      "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "preflight.json のフォーマットバージョン（現在は 1）。"
+    },
+    "id": {
+      "type": "string",
+      "description": "このルールの識別子。preflight レポートの `configId` に記録される。"
+    },
+    "name": {
+      "type": "string",
+      "description": "表示名。"
     },
     "page": {
       "type": "object",
       "description": "ページサイズ・向きのチェック。省略したキーはチェックしない。",
       "additionalProperties": false,
       "properties": {
-        "size": { "type": "string", "description": "期待するページサイズの名前（例: `A4`, `Letter`）。core/units.ts の PAPER_SIZES_PT に定義されたキー。" },
-        "orientation": { "type": "string", "enum": ["portrait", "landscape"], "description": "期待するページの向き。" },
-        "tolerance": { "type": "number", "minimum": 0, "description": "ページサイズ比較の許容誤差（pt、既定 2）。" }
+        "size": {
+          "type": "string",
+          "description": "期待するページサイズの名前（例: `A4`, `Letter`）。core/units.ts の PAPER_SIZES_PT に定義されたキー。"
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "portrait",
+            "landscape"
+          ],
+          "description": "期待するページの向き。"
+        },
+        "tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "description": "ページサイズ比較の許容誤差（pt、既定 2）。"
+        }
       }
     },
-    "margins": { "$ref": "#/$defs/PreflightMargins" },
+    "margins": {
+      "$ref": "#/$defs/PreflightMargins"
+    },
     "pages": {
       "type": "object",
       "description": "ページ数のチェック。",
       "additionalProperties": false,
       "properties": {
-        "min": { "type": "integer", "minimum": 0, "description": "最小ページ数（未満だと警告）。" },
-        "max": { "type": "integer", "minimum": 0, "description": "最大ページ数（超過すると警告）。" }
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "最小ページ数（未満だと警告）。"
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "最大ページ数（超過すると警告）。"
+        }
       }
     },
     "marginOverrides": {
       "type": "array",
       "description": "特定ページだけ margins の一部を上書きする。配列の後の要素ほど優先され、各要素は指定した辺だけを上書きする（省略した辺は base の margins のまま）。単位は上書きされる側の margins.unit に従う。",
-      "items": { "$ref": "#/$defs/PreflightMarginOverride" }
+      "items": {
+        "$ref": "#/$defs/PreflightMarginOverride"
+      }
     },
     "checks": {
       "type": "object",
       "description": "各チェックの有効/無効。",
       "additionalProperties": false,
       "properties": {
-        "marginText": { "type": "boolean", "description": "PDF のテキストオブジェクト座標に基づく余白チェック（getTextContent）。" },
-        "marginRaster": { "type": "boolean", "description": "ラスタライズした画像に基づく余白チェック（テキスト以外の描画も検出できる）。" },
-        "stampCollision": { "type": "boolean", "description": "スタンプが既存の描画（テキスト・画像・罫線など）と重ならないかのラスタベースのチェック。新規 Workspace では既定で true。" }
+        "marginText": {
+          "type": "boolean",
+          "description": "PDF のテキストオブジェクト座標に基づく余白チェック（getTextContent）。"
+        },
+        "marginRaster": {
+          "type": "boolean",
+          "description": "ラスタライズした画像に基づく余白チェック（テキスト以外の描画も検出できる）。"
+        },
+        "stampCollision": {
+          "type": "boolean",
+          "description": "スタンプが既存の描画（テキスト・画像・罫線など）と重ならないかのラスタベースのチェック。新規 Workspace では既定で true。"
+        }
       }
     }
   },
@@ -54,33 +101,80 @@
     "PreflightMargins": {
       "type": "object",
       "description": "余白（ページの端から本文までの距離）。",
-      "required": ["top", "bottom", "left", "right", "unit"],
+      "required": [
+        "top",
+        "bottom",
+        "left",
+        "right",
+        "unit"
+      ],
       "additionalProperties": false,
       "properties": {
-        "top": { "type": "number", "minimum": 0, "description": "上余白。" },
-        "bottom": { "type": "number", "minimum": 0, "description": "下余白。" },
-        "left": { "type": "number", "minimum": 0, "description": "左余白。" },
-        "right": { "type": "number", "minimum": 0, "description": "右余白。" },
-        "unit": { "type": "string", "enum": ["mm", "pt", "in"], "description": "top/bottom/left/right の単位。" }
+        "top": {
+          "type": "number",
+          "minimum": 0,
+          "description": "上余白。"
+        },
+        "bottom": {
+          "type": "number",
+          "minimum": 0,
+          "description": "下余白。"
+        },
+        "left": {
+          "type": "number",
+          "minimum": 0,
+          "description": "左余白。"
+        },
+        "right": {
+          "type": "number",
+          "minimum": 0,
+          "description": "右余白。"
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "mm",
+            "pt",
+            "in"
+          ],
+          "description": "top/bottom/left/right の単位。"
+        }
       }
     },
     "PreflightMarginOverride": {
       "type": "object",
       "description": "特定のページ集合に対する margins の部分的な上書き（指定した辺のみ）。",
-      "required": ["pages", "margins"],
+      "required": [
+        "pages",
+        "margins"
+      ],
       "additionalProperties": false,
       "properties": {
-        "pages": { "$ref": "stamps.schema.json#/$defs/PageSelector" },
+        "pages": {
+          "$ref": "stamps.schema.json#/$defs/PageSelector"
+        },
         "margins": {
           "type": "object",
           "description": "上書きする辺だけを指定する（単位は base の margins.unit に従う）。",
           "additionalProperties": false,
           "minProperties": 1,
           "properties": {
-            "top": { "type": "number", "minimum": 0 },
-            "bottom": { "type": "number", "minimum": 0 },
-            "left": { "type": "number", "minimum": 0 },
-            "right": { "type": "number", "minimum": 0 }
+            "top": {
+              "type": "number",
+              "minimum": 0
+            },
+            "bottom": {
+              "type": "number",
+              "minimum": 0
+            },
+            "left": {
+              "type": "number",
+              "minimum": 0
+            },
+            "right": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         }
       }

@@ -15,5 +15,4 @@ export {
   type StampCollisionResult,
 } from './raster.js';
 export { reportFileName, summarizeReport } from './report.js';
-export { PREFLIGHT_PRESETS, applyPreflightPreset, type PreflightPreset } from './presets.js';
 export { annotatePreflightPdf, describePreflightCode } from './annotate.js';

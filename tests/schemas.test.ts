@@ -10,7 +10,6 @@ import Ajv2020 from 'ajv/dist/2020';
 import { describe, expect, it } from 'vitest';
 import { WORKBENCH_FILES } from '@/core/types';
 import type { StampsConfig } from '@/core/types';
-import { PREFLIGHT_PRESETS, applyPreflightPreset } from '@/preflight';
 import { BUILTIN_STAMP_TEMPLATES, createInstanceFromDefinition } from '@/stamps';
 import {
   createDefaultJobsConfig,
@@ -86,12 +85,6 @@ describe('default configs validate against their schema', () => {
 
   it('createDefaultPreflightConfig()', () => {
     validateAgainst(ajv, PREFLIGHT_SCHEMA_URL, createDefaultPreflightConfig());
-  });
-
-  it('every PREFLIGHT_PRESETS entry', () => {
-    for (const preset of PREFLIGHT_PRESETS) {
-      validateAgainst(ajv, PREFLIGHT_SCHEMA_URL, applyPreflightPreset(preset, createDefaultPreflightConfig()));
-    }
   });
 
   it('createDefaultJobsConfig() (empty)', () => {

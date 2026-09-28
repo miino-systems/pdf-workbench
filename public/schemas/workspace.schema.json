@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://miino-systems.github.io/pdf-workbench/schemas/workspace.schema.json",
+  "title": "PDF Workbench: workspace.json",
+  "description": "Workspace 全体の設定（ディレクトリ構成、出力ファイル名の接尾辞、履歴の記録方式など）。",
+  "type": "object",
+  "required": [
+    "version",
+    "name",
+    "createdAt",
+    "directories",
+    "output",
+    "history"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "workspace.json のフォーマットバージョン（現在は 1）。"
+    },
+    "name": {
+      "type": "string",
+      "description": "Workspace の表示名（省略時はディレクトリ名が使われる）。"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Workspace を初期化した日時（ISO-8601）。"
+    },
+    "directories": {
+      "type": "object",
+      "description": "Workspace 内の各用途ディレクトリの名前（相対パス）。",
+      "required": [
+        "papers",
+        "output",
+        "preview",
+        "assets",
+        "fonts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "papers": {
+          "type": "string",
+          "description": "元 PDF を置くディレクトリ。アプリはここを読み取り専用として扱い、絶対に上書きしない。"
+        },
+        "output": {
+          "type": "string",
+          "description": "スタンプ適用後の PDF を書き出すディレクトリ。"
+        },
+        "preview": {
+          "type": "string",
+          "description": "PNG/JPEG プレビュー・変換ファイルを置くディレクトリ。"
+        },
+        "assets": {
+          "type": "string",
+          "description": "スタンプ画像（ロゴ、CC ライセンス画像など）を置くディレクトリ。"
+        },
+        "fonts": {
+          "type": "string",
+          "description": "Workspace 固有のフォントファイル（.ttf/.otf）を置くディレクトリ。"
+        },
+        "preflight": {
+          "type": "string",
+          "description": "一括 preflight で問題のあった PDF の注釈付きコピーと summary.csv / summary.json を保存するディレクトリ。省略時は `preflight`。"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": [
+        "suffix"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "suffix": {
+          "type": "string",
+          "description": "出力ファイル名の `.pdf` 拡張子の前に挿入する接尾辞（例: `_stamped` → `paper_stamped.pdf`）。sequence.json の entries[].output で個別に上書きできる。"
+        }
+      }
+    },
+    "history": {
+      "type": "object",
+      "required": [
+        "hashChain"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "hashChain": {
+          "type": "boolean",
+          "description": "true の場合、history/events.jsonl に追記する各イベントに prevHash/hash（ハッシュチェーン）を付与する。"
+        }
+      }
+    }
+  }
+}

@@ -27,7 +27,12 @@ const FORBIDDEN: { re: RegExp; why: string }[] = [
   { re: /\bEventSource\b/, why: 'EventSource' },
   { re: /\bRTCPeerConnection\b/, why: 'WebRTC' },
   // www.w3.org/2000/svg is the SVG XML namespace identifier (createElementNS), never fetched.
-  { re: /https?:\/\/(?!example\.org|www\.w3\.org\/2000\/svg)[a-z0-9.-]+\.(com|net|org|io|dev|jp)\//i, why: 'remote URL' },
+  // miino-systems.github.io/pdf-workbench/schemas/… is the `$schema` / `$id`
+  // of public/schemas/: written into config files for editors, never fetched.
+  {
+    re: /https?:\/\/(?!example\.org|www\.w3\.org\/2000\/svg|miino-systems\.github\.io\/pdf-workbench\/)[a-z0-9.-]+\.(com|net|org|io|dev|jp)\//i,
+    why: 'remote URL',
+  },
   { re: /\bgithub\.com\/login\/oauth|api\.github\.com|gitlab\.com\/api/i, why: 'git hosting API' },
   { re: /isomorphic-git/, why: 'git remote transport' },
 ];

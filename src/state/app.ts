@@ -39,6 +39,7 @@ import {
   saveSequenceConfig,
   saveStampsConfig,
   saveWorkspaceConfig,
+  stripSchemaKey,
   type RecentWorkspace,
   type WorkspaceState,
 } from '@/workspace';
@@ -840,7 +841,7 @@ export class AppController {
     if (known === undefined || text === known) return false;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(text);
+      parsed = stripSchemaKey(JSON.parse(text));
     } catch (e) {
       throw new Error(
         `${fileLabel(kind)} が外部で変更されましたが JSON として読めません（${e instanceof Error ? e.message : String(e)}）．修正されるまで保存しません`,

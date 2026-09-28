@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://miino-systems.github.io/pdf-workbench/schemas/sequence.schema.json",
+  "title": "PDF Workbench: sequence.json",
+  "description": "複数の PDF をまたぐ通しページ番号のための、ファイルの並び順と各ファイルの個別設定。手書き編集やスクリプト生成にも対応するため、読み込み時は欠けているキーを既定値で補い、壊れた entries は無視する（normalizeSequenceConfig）。",
+  "type": "object",
+  "required": ["version", "order", "firstPage", "startOn", "entries"],
+  "properties": {
+    "$schema": { "type": "string", "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。" },
+    "version": { "type": "integer", "minimum": 1, "description": "sequence.json のフォーマットバージョン（現在は 1）。" },
+    "order": {
+      "type": "string",
+      "enum": ["name", "manual"],
+      "description": "ファイルの並べ方。name はファイル名の自然順（`paper2.pdf` < `paper10.pdf`、entries は startPage/skip/output の個別設定のみを持つ）。manual は entries の並び順（未掲載のファイルは名前順で末尾に追加され、除外されない）。"
+    },
+    "firstPage": { "type": "integer", "minimum": 1, "description": "先頭ファイルの最初のページに振る番号（既定 1）。" },
+    "startOn": {
+      "type": "string",
+      "enum": ["any", "odd", "even"],
+      "description": "各ファイルの先頭ページの番号の偶奇を揃えるルール。odd は各ファイルを奇数ページ（レクト）始まりにするため必要なら 1 つ番号を飛ばす。startPage を明示したファイルにはこのルールは適用されない。"
+    },
+    "entries": {
+      "type": "array",
+      "description": "ファイルごとの個別設定。order=manual のときはこの並び順がそのまま通しページ番号の順序になる。",
+      "items": { "$ref": "#/$defs/SequenceEntry" }
+    },
+    "origin": { "$ref": "#/$defs/SequenceOrigin" }
+  },
+  "$defs": {
+    "SequenceEntry": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string", "description": "workspace 相対の元ファイルパス（例: `papers/paper001.pdf`）。" },
+        "startPage": { "type": "integer", "minimum": 1, "description": "このファイルの最初のページ番号を固定する。以降のファイルはここから通し番号を続ける（欠番・再スタート・外部で採番済みの資料などに使う）。" },
+        "skip": { "type": "boolean", "description": "true の場合、このファイルを通しページ番号の対象から除外する（ページ番号スタンプは PageNumberLayer.startAt にフォールバックする）。" },
+        "output": {
+          "type": "string",
+          "description": "出力ディレクトリ内でのファイル名（`<name><suffix>.pdf` の既定値を上書きする）。`.pdf` は省略すると自動的に付与され、サブディレクトリは指定できるが `..` は使えない。"
+        }
+      }
+    },
+    "SequenceOrigin": {
+      "type": "object",
+      "description": "この並び順がどこから来たかの記録（アプリが CSV/JSON の読み込みや手動編集の際に書き込む）。手で作成する場合は省略してよい。",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "enum": ["import", "manual", "name"], "description": "並び順の由来。import=ファイルの取り込み、manual=UI での手動並び替え、name=既定のファイル名順。" },
+        "source": { "type": "string", "description": "取り込み元の説明（例: 元ファイル名）。" },
+        "format": { "type": "string", "enum": ["csv", "json"], "description": "取り込んだファイルの形式。" },
+        "importedAt": { "type": "string", "format": "date-time", "description": "取り込んだ日時（ISO-8601）。" },
+        "editedAt": { "type": "string", "format": "date-time", "description": "取り込み後に手動で編集した最終日時（ISO-8601）。" },
+        "sortKey": { "type": "string", "description": "取り込み元での並び替えキー（列名など）。" },
+        "rows": { "type": "integer", "minimum": 0, "description": "取り込み元の行数。" }
+      }
+    }
+  }
+}

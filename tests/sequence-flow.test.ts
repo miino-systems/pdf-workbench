@@ -78,6 +78,7 @@ describe('continuous page numbering (sequence.json) end-to-end', () => {
     const { ctrl } = await setup();
     const ws = ctrl.requireWorkspace();
     expect(JSON.parse(await ws.fs.readText(WORKBENCH_FILES.sequence))).toEqual({
+      $schema: 'https://miino-systems.github.io/pdf-workbench/schemas/sequence.schema.json',
       version: 1,
       order: 'name',
       firstPage: 1,

@@ -40,7 +40,7 @@ describe('runPreflightBatch', () => {
     const progress: number[] = [];
     const res = await runPreflightBatch(ctrl, { onProgress: (done) => progress.push(done) });
     expect(progress).toEqual([0, 1, 2]);
-    expect(res.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0 });
+    expect(res.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0, skipped: 0 });
     const bad = res.items.find((i) => i.file === 'papers/bad.pdf')!;
     expect(bad.annotated).toBe('preflight/bad_stamped_preflight.pdf');
     expect(res.items.find((i) => i.file === 'papers/good.pdf')!.annotated).toBeUndefined();
@@ -137,7 +137,7 @@ describe('single-file check', () => {
     expect(first.annotated).toBe('preflight/a_stamped_preflight.pdf');
     expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(true);
     let summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
-    expect(summary.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0 });
+    expect(summary.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0, skipped: 0 });
     expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf').annotated).toBe('preflight/a_stamped_preflight.pdf');
     expect(await ws.fs.readText('preflight/summary.csv')).toContain('papers/a.pdf,warning');
 
@@ -225,5 +225,43 @@ describe('phantom margin content', () => {
     const gray = await runPreflightBatch(ctrl, { rasterize: rasterizer(box, 200) });
     expect(gray.items[0].result).toBe('warning');
     expect(gray.items[0].summary).toContain('BOTTOM_MARGIN');
+  });
+});
+
+describe('検査スルー (skipFiles)', () => {
+  it('leaves skipped PDFs out of the batch and keeps the folder consistent when toggled', async () => {
+    const { preflightSingle, setPreflightSkipped } = await import('@/state/preflightBatch');
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    const bad = await buildFixturePdf([{ size: A4, texts: [{ text: 'Header in the margin', x: 100, y: 820 }] }]);
+    await ws.fs.writeBytes('papers/a.pdf', bad);
+    await ws.fs.writeBytes('papers/b.pdf', bad);
+    await ctrl.refreshFiles();
+    await runPreflightBatch(ctrl);
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(true);
+
+    // Marking a file removes its copy and turns its summary row into `skipped`.
+    await setPreflightSkipped(ctrl, 'papers/a.pdf', true);
+    expect(ctrl.requireWorkspace().preflight.skipFiles).toEqual(['papers/a.pdf']);
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
+    let summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
+    expect(summary.counts).toEqual({ ok: 0, warning: 1, error: 0, failed: 0, skipped: 1 });
+
+    // The batch does not check it; a single check does, but leaves the folder alone.
+    const res = await runPreflightBatch(ctrl);
+    expect(res.items.find((i) => i.file === 'papers/a.pdf')).toMatchObject({ result: 'skipped' });
+    expect(res.counts.skipped).toBe(1);
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
+    const single = await preflightSingle(ctrl, 'papers/a.pdf', bad);
+    expect(single.report.result).toBe('warning');
+    expect(single.annotated).toBeUndefined();
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
+
+    // Unmarking drops the row (not checked yet) and the setting.
+    await setPreflightSkipped(ctrl, 'papers/a.pdf', false);
+    expect(ctrl.requireWorkspace().preflight.skipFiles).toBeUndefined();
+    summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
+    expect(summary.items.map((i: { file: string }) => i.file)).toEqual(['papers/b.pdf']);
+    expect(summary.counts.skipped).toBe(0);
   });
 });

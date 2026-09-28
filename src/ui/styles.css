@@ -303,7 +303,11 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .outputs-dialog::backdrop { background: rgba(0, 0, 0, .35); }
 .outputs-list { max-height: 60vh; overflow-y: auto; }
 .preflight-problems { max-height: 50vh; overflow-y: auto; margin-top: 8px; }
-.preflight-problems li .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.preflight-problems li { gap: 10px; }
+/* Same width for every result pill so the names and summaries line up. */
+.preflight-problems li > .badge { flex: 0 0 4.5em; text-align: center; padding: 1px 0; }
+.preflight-problems li > .name { flex: 0 0 16em; }
+.preflight-problems li > .summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 
 /* PDF tab file list: to-do groups first, current outputs last */
 .file-counts { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; font-size: 11.5px; margin-bottom: 4px; }
@@ -318,6 +322,10 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .file-list li.file-group:hover { background: transparent; }
 .file-list li.file-group.update { color: var(--accent); }
 .file-list li.needs-update { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.skip-chip {
+  font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 0 7px; white-space: nowrap;
+}
 .update-chip {
   font-size: 10.5px; font-weight: 600; color: var(--accent-text); background: var(--accent);
   border-radius: 999px; padding: 0 7px; white-space: nowrap;

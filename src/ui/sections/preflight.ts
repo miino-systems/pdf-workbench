@@ -14,9 +14,17 @@ import { PdfRenderer } from '@/pdf/renderer';
 import { DEFAULT_MARGIN_TOLERANCE_PT, describePreflightCode, summarizeReport } from '@/preflight';
 import { parsePageList } from '@/stamps';
 import type { AppController, AppState } from '@/state/app';
-import { loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
+import { isPreflightSkipped, loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
+import { basename } from '@/workspace';
 import { button, h, replaceChildren } from '../dom';
+
+const BATCH_BADGE: Record<Exclude<PreflightBatchResult['items'][number]['result'], 'ok'>, { cls: string; label: string }> = {
+  warning: { cls: 'warn', label: '警告' },
+  error: { cls: 'err', label: 'エラー' },
+  failed: { cls: 'err', label: '失敗' },
+  skipped: { cls: '', label: 'スルー' },
+};
 
 /** Render every page at 1 px/pt into an offscreen canvas, for the raster checks. */
 async function* rasterizePages(bytes: Uint8Array): AsyncIterable<PageRaster> {
@@ -253,6 +261,10 @@ function buildRulesForm(
   async function doSave(): Promise<void> {
     statusEl.textContent = '保存中…';
     const toSave = structuredClone(draft);
+    // "検査スルー" is set from the PDF tab: keep what is saved now, not the draft's copy.
+    const skipFiles = ctrl.state.workspace?.preflight.skipFiles;
+    if (skipFiles?.length) toSave.skipFiles = [...skipFiles];
+    else delete toSave.skipFiles;
     // Our own save coming back through the store must not rebuild the form
     // (that would drop the focus and the caret while the user is typing).
     saveNowRef.savingJson = JSON.stringify(toSave);
@@ -499,6 +511,16 @@ export const preflightSection: Section = {
 
     let batch: PreflightBatchResult | undefined;
     let batchWs: unknown;
+    /** `skipFiles` the shown summary was loaded for: "検査スルー" set in the PDF tab rewrites the summary. */
+    let batchSkipJson: string | undefined;
+
+    /**
+     * The name a batch row is listed by: its review copy's (`<output name>_preflight.pdf`,
+     * e.g. `NOLTA-01_preflight.pdf`) rather than the source's paper ID.
+     */
+    function reviewCopyName(file: string, annotated: string | undefined, dir: string): string {
+      return basename(annotated ?? ctrl.preflightCopyPathFor(file, dir));
+    }
 
     /** Open a workspace PDF in a new tab (blob URL; nothing leaves the browser). */
     async function openInTab(path: string): Promise<void> {
@@ -552,11 +574,15 @@ export const preflightSection: Section = {
       batchCancelButton.hidden = !state.cancel;
       batchCancelButton.disabled = !!state.cancel?.cancelling;
       batchCancelButton.lastChild!.textContent = state.cancel?.cancelling ? '中止しています…' : '中止';
-      batchButton.textContent = `全 PDF を一括検査（${state.files.length} 件）`;
       if (!ws) return;
-      if (batchWs !== ws.fs) {
+      const skipCount = state.files.filter((f) => isPreflightSkipped(ws.preflight, f.path)).length;
+      batchButton.textContent = `全 PDF を一括検査（${state.files.length} 件${skipCount ? `，うちスルー ${skipCount} 件` : ''}）`;
+      const skipJson = JSON.stringify(ws.preflight.skipFiles ?? []);
+      // (A "検査スルー" change rewrites the summary after saving the config: reload once it is done.)
+      if (batchWs !== ws.fs || (batchSkipJson !== skipJson && !state.busy)) {
         // Show the last saved summary of this workspace, if any.
         batchWs = ws.fs;
+        batchSkipJson = skipJson;
         batch = undefined;
         void loadPreflightSummary(ctrl).then((s) => {
           if (batchWs === ctrl.state.workspace?.fs) {
@@ -569,8 +595,13 @@ export const preflightSection: Section = {
         replaceChildren(batchBox, h('p', { class: 'muted' }, `結果と注釈付き PDF は ${preflightDir(ctrl)}/ に保存されます．`));
         return;
       }
-      const problems = batch.items.filter((it) => it.result !== 'ok');
-      const { ok, warning, error, failed } = batch.counts;
+      // Problems first, then the files marked "検査スルー".
+      const problems = [
+        ...batch.items.filter((it) => it.result !== 'ok' && it.result !== 'skipped'),
+        ...batch.items.filter((it) => it.result === 'skipped'),
+      ];
+      const { ok, warning, error, failed, skipped } = batch.counts;
+      const dir = batch.dir;
       replaceChildren(
         batchBox,
         h(
@@ -580,6 +611,7 @@ export const preflightSection: Section = {
           h('span', { class: 'badge warn' }, `警告 ${warning}`),
           h('span', { class: 'badge err' }, `エラー ${error}`),
           failed ? h('span', { class: 'badge err' }, `検査失敗 ${failed}`) : '',
+          skipped ? h('span', { class: 'badge', title: 'PDF タブで「検査スルー」にした PDF' }, `スルー ${skipped}`) : '',
           h('span', { class: 'muted' }, `${batch.ranAt}（${batch.dir}/summary.csv）`),
           batch.cancelled ? h('span', { class: 'badge warn' }, `中止（${batch.items.length}/${batch.total ?? '?'} 件）`) : '',
         ),
@@ -587,18 +619,19 @@ export const preflightSection: Section = {
           ? h(
               'ul',
               { class: 'list preflight-problems' },
-              problems.map((it) =>
-                h(
+              problems.map((it) => {
+                const badge = BATCH_BADGE[it.result === 'ok' ? 'failed' : it.result];
+                return h(
                   'li',
                   {
-                    title: it.annotated ? 'クリックで注釈付きの PDF を開く' : '',
+                    title: `${it.file}${it.annotated ? '（クリックで注釈付きの PDF を開く）' : ''}`,
                     on: { click: () => it.annotated && void openInTab(it.annotated) },
                   },
-                  h('span', { class: `badge ${it.result === 'warning' ? 'warn' : 'err'}` }, it.result === 'warning' ? '警告' : it.result === 'error' ? 'エラー' : '失敗'),
-                  h('span', { class: 'name' }, it.file.split('/').pop() ?? it.file),
-                  h('span', { class: 'muted', style: 'flex:2' }, it.summary),
-                ),
-              ),
+                  h('span', { class: `badge ${badge.cls}` }, badge.label),
+                  h('span', { class: 'name' }, reviewCopyName(it.file, it.annotated, dir)),
+                  h('span', { class: 'muted summary' }, it.summary),
+                );
+              }),
             )
           : h('p', { class: 'ok' }, 'すべての PDF が問題なしでした．'),
       );

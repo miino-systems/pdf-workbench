@@ -492,6 +492,12 @@ export interface PreflightConfig {
   pages?: { min?: number; max?: number };
   /** Text that must / must not appear, see `PreflightTextRule`. Always run (no `checks` switch). */
   textRules?: PreflightTextRule[];
+  /**
+   * Workspace paths of PDFs the batch check passes over ("検査スルー", e.g.
+   * known false positives), set from the PDF tab. They are listed as
+   * `skipped` in the summary and get no annotated copy.
+   */
+  skipFiles?: string[];
   checks?: {
     /** Object-based (getTextContent) margin check. */
     marginText?: boolean;

@@ -13,7 +13,7 @@ import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
 import { DEFAULT_MARGIN_TOLERANCE_PT, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
-import { loadPreflightSummary, preflightDir, preflightOne, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
+import { loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { button, h, replaceChildren } from '../dom';
 
@@ -407,14 +407,24 @@ export const preflightSection: Section = {
     let savedJson: string | undefined;
     const saveNowRef: { save: () => void } = { save: () => undefined };
 
+    /** The single check's review copy (undefined path when the file passed). */
+    let lastAnnotated: { file: string; path?: string } | undefined;
+
     async function runCheck(): Promise<void> {
       const ws = ctrl.state.workspace;
       const state = ctrl.state;
       if (!ws || !state.selectedFile || !state.selectedBytes || !state.selectedSha256) return;
       await ctrl.run('Preflight を実行', async () => {
-        const report = await preflightOne(ctrl, state.selectedFile!, state.selectedBytes!, { rasterize: rasterizePages });
-        const path = await ctrl.saveReport(report);
-        ctrl.toast(report.result === 'error' ? 'err' : report.result === 'warning' ? 'warn' : 'ok', `Preflight 完了: ${summarizeReport(report)} → ${path}`);
+        const { report, annotated } = await preflightSingle(ctrl, state.selectedFile!, state.selectedBytes!, { rasterize: rasterizePages });
+        lastAnnotated = { file: report.file, path: annotated };
+        await ctrl.saveReport(report);
+        batch = await loadPreflightSummary(ctrl);
+        renderBatch(ctrl.state);
+        ctrl.toast(
+          report.result === 'error' ? 'err' : report.result === 'warning' ? 'warn' : 'ok',
+          `Preflight 完了: ${summarizeReport(report)}${annotated ? `．注釈付きのコピーを ${annotated} に保存しました` : ''}`,
+          8000,
+        );
       });
     }
 
@@ -443,7 +453,15 @@ export const preflightSection: Section = {
       );
       replaceChildren(
         resultBox,
-        h('div', { class: 'row' }, badge, h('span', null, summarizeReport(report))),
+        h(
+          'div',
+          { class: 'row' },
+          badge,
+          h('span', null, summarizeReport(report)),
+          lastAnnotated?.file === report.file && lastAnnotated.path
+            ? button('注釈付き PDF を開く', () => void openInTab(lastAnnotated!.path!), 'btn btn-sm', 'file-text')
+            : '',
+        ),
         h('p', { class: 'muted' }, `file: ${report.file} / sha256: ${report.sha256} / ranAt: ${report.ranAt}`),
         report.documentWarnings.length
           ? h('div', { class: 'alert warn' }, `文書レベルの警告: ${report.documentWarnings.join(', ')}`)

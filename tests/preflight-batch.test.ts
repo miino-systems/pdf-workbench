@@ -118,3 +118,42 @@ describe('full re-runs and cancelling', () => {
     expect(await ws.fs.exists('papers/a.pdf')).toBe(true);
   });
 });
+
+describe('single-file check', () => {
+  it('writes the annotated copy, updates the summary row, and removes the copy once fixed', async () => {
+    const { preflightSingle } = await import('@/state/preflightBatch');
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    const bad = await buildFixturePdf([{ size: A4, texts: [{ text: 'Header in the margin', x: 100, y: 820 }] }]);
+    const good = await buildFixturePdf([{ size: A4, texts: [{ text: 'Body', x: 100, y: 500 }] }]);
+    await ws.fs.writeBytes('papers/a.pdf', good);
+    await ws.fs.writeBytes('papers/b.pdf', good);
+    await ctrl.refreshFiles();
+    await runPreflightBatch(ctrl);
+
+    await ws.fs.writeBytes('papers/a.pdf', bad);
+    const first = await preflightSingle(ctrl, 'papers/a.pdf', bad);
+    expect(first.report.result).toBe('warning');
+    expect(first.annotated).toBe('preflight/a_preflight.pdf');
+    expect(await ws.fs.exists('preflight/a_preflight.pdf')).toBe(true);
+    let summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
+    expect(summary.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0 });
+    expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf').annotated).toBe('preflight/a_preflight.pdf');
+    expect(await ws.fs.readText('preflight/summary.csv')).toContain('papers/a.pdf,warning');
+
+    const fixed = await preflightSingle(ctrl, 'papers/a.pdf', good);
+    expect(fixed.annotated).toBeUndefined();
+    expect(await ws.fs.exists('preflight/a_preflight.pdf')).toBe(false);
+    summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
+    expect(summary.counts.ok).toBe(2);
+  });
+
+  it('writes the copy even when no batch has been run yet', async () => {
+    const { preflightSingle } = await import('@/state/preflightBatch');
+    const ctrl = await setup();
+    const bad = await buildFixturePdf([{ size: A4, texts: [{ text: 'Header in the margin', x: 100, y: 820 }] }]);
+    const res = await preflightSingle(ctrl, 'papers/x.pdf', bad);
+    expect(await ctrl.requireWorkspace().fs.exists(res.annotated!)).toBe(true);
+    expect(await ctrl.requireWorkspace().fs.exists('preflight/summary.json')).toBe(false);
+  });
+});

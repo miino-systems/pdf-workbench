@@ -35,6 +35,7 @@ function displayedPageNumber(state: AppState, page: number): number {
 export const pdfSection: Section = {
   id: 'pdf',
   title: 'PDF',
+  fill: true,
   mount(root, ctrl) {
     // ---------------------------------------------------------- sidebar
     // The file list scrolls on its own so the whole tab fits in one screen.
@@ -119,7 +120,7 @@ export const pdfSection: Section = {
 
     const previewPanel = h('div', { class: 'panel pdf-preview' }, h('h2', null, 'Preview'), toolbar, collisionMsg, previewWrap);
 
-    root.append(h('div', { class: 'grid grid-sidebar pdf-layout' }, sidebar, previewPanel));
+    root.append(h('div', { class: 'grid grid-sidebar fill-layout' }, sidebar, previewPanel));
 
     // ------------------------------------------------------- render state
     let latestState: AppState = ctrl.state;

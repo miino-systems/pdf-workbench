@@ -47,6 +47,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { margin: 0; height: 100%; }
 body {
   font: 14px/1.5 var(--font);
@@ -221,10 +222,15 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .anchor-btn { padding: 4px 0; justify-content: center; }
 .anchor-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .position-editor { display: flex; flex-direction: column; gap: 6px; }
+.placement-body { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.placement-body > .field { margin-bottom: 0; }
 
-/* pdf section: fills the viewport; only the file list and preview scroll */
-.app-main > #section-pdf { flex: 1 1 auto; min-height: 0; }
-.pdf-layout { height: 100%; min-height: 420px; grid-template-rows: minmax(0, 1fr); }
+/* Sections that fill the viewport (PDF, Stamps): their columns scroll, not the page */
+.app-main > .section-fill { flex: 1 1 auto; min-height: 0; }
+.fill-layout { height: 100%; min-height: 420px; grid-template-rows: minmax(0, 1fr); }
+.scroll-col { min-height: 0; overflow-y: auto; }
+
+/* pdf section: only the file list and preview scroll */
 .pdf-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .pdf-sidebar > .panel { margin-top: 0; flex: 0 0 auto; }
 .pdf-sidebar > .pdf-files { flex: 1 1 auto; min-height: 140px; display: flex; flex-direction: column; }
@@ -235,8 +241,9 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .pdf-preview { display: flex; flex-direction: column; min-height: 0; }
 .pdf-preview .preview-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
 @media (max-width: 1000px) {
-  .app-main > #section-pdf { flex: 0 0 auto; }
-  .pdf-layout { height: auto; grid-template-rows: none; }
+  .app-main > .section-fill { flex: 0 0 auto; }
+  .fill-layout { height: auto; grid-template-rows: none; }
+  .scroll-col { overflow-y: visible; }
   .pdf-sidebar > .pdf-files { max-height: 50vh; }
   .pdf-preview .preview-wrap { max-height: 80vh; }
 }

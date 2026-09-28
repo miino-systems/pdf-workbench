@@ -9,6 +9,8 @@ import { button, h, replaceChildren } from './dom';
 export interface Section {
   id: TabId;
   title: string;
+  /** Fill the viewport height (the section scrolls its own columns instead of the page). */
+  fill?: boolean;
   /** Mount into `root`; return an update callback invoked on every state change. */
   mount(root: HTMLElement, ctrl: AppController): (state: AppState, prev: AppState) => void;
 }
@@ -51,7 +53,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const panels = new Map<TabId, HTMLElement>();
 
   for (const section of sections) {
-    const panel = h('section', { class: 'section', attrs: { role: 'tabpanel' }, id: `section-${section.id}` });
+    const panel = h('section', { class: section.fill ? 'section section-fill' : 'section', attrs: { role: 'tabpanel' }, id: `section-${section.id}` });
     panel.hidden = true;
     main.appendChild(panel);
     panels.set(section.id, panel);

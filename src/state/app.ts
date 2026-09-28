@@ -530,6 +530,16 @@ export class AppController {
     );
   }
 
+  /** Enable or disable every placement of a stamp (the checkbox in the Stamps list). */
+  async setStampEnabled(stampId: string, enabled: boolean): Promise<void> {
+    await this.updateStamps(
+      (cfg) => {
+        for (const inst of cfg.instances) if (inst.stampId === stampId) inst.enabled = enabled;
+      },
+      { type: enabled ? EVENT_TYPES.stampEnabled : EVENT_TYPES.stampDisabled, stamp: stampId },
+    );
+  }
+
   async setInstancePosition(instanceId: string, position: StampPosition): Promise<void> {
     let stampId = '';
     await this.updateStamps(

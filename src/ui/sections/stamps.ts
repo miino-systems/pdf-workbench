@@ -1,15 +1,20 @@
 /**
- * Stamps tab: manage `StampDefinition`s (templates with text/image/pageNumber
- * layers, a default position and default pages) and the `StampInstance`s
- * that place them (enabled flag, page selection, optional position override).
+ * Stamps tab: one list entry per stamp. `stamps.json` still separates the
+ * design (`StampDefinition`: layers) from where it goes (`StampInstance`:
+ * enabled flag, pages, position), but the UI presents them together — a
+ * stamp is edited as its placements plus its design, and a second placement
+ * is only added when the same design goes to different places (e.g. page
+ * numbers bottom-right on odd pages and bottom-left on even ones). The
+ * definition's `defaultPosition` / `defaultPages` are no longer shown: they
+ * only seed a new stamp's first placement.
  *
- * Editing keeps a local "draft" copy of whichever definition/instance is
- * selected so that continuous typing never gets interrupted by a full DOM
- * rebuild: the editor form is rebuilt only when the selection changes or the
- * underlying `stamps.json` changed from outside (e.g. `generate.ts` filling
- * in a font's sha256 after a run). Field edits mutate the draft in place and
- * schedule a 400ms-debounced save via `ctrl.updateDefinition` /
- * `ctrl.setInstancePages` / `ctrl.setInstancePosition`.
+ * Editing keeps a local "draft" copy of the selected definition so that
+ * continuous typing never gets interrupted by a full DOM rebuild: the design
+ * form is rebuilt only when the selection changes or the underlying
+ * `stamps.json` changed from outside (e.g. undo, or `generate.ts` filling in
+ * a font's sha256 after a run). Field edits mutate the draft in place and
+ * schedule a 400ms-debounced save via `ctrl.updateDefinition`; placement
+ * edits save through `ctrl.setInstancePages` / `ctrl.setInstancePosition`.
  */
 import type {
   FontRef,
@@ -25,7 +30,6 @@ import type {
 } from '@/core/types';
 import { STAMP_ANCHORS } from '@/core/types';
 import { mmToPt, ptToMm, round } from '@/core/units';
-import { EVENT_TYPES } from '@/history';
 import {
   BUILTIN_STAMP_TEMPLATES,
   DEFAULT_STAMP_POSITION,
@@ -119,10 +123,6 @@ function optionalNumberInput(value: number | undefined, onChange: (n: number | u
     if (!Number.isNaN(n)) onChange(n);
   });
   return inp;
-}
-
-function describePosition(pos: StampPosition): string {
-  return `${ANCHOR_LABELS[pos.anchor]} (${round(pos.offsetX, 1)}, ${round(pos.offsetY, 1)} pt)`;
 }
 
 function colorField(layer: TextLayer | PageNumberLayer, scheduleSave: () => void): HTMLElement {
@@ -585,18 +585,19 @@ function renderLayerRow(
   return h('div', { class: 'layer' }, header, buildLayerFields(ctrl, layer, scheduleSave));
 }
 
-function cloneDraft(def: StampDefinition): StampDefinition {
-  const d = structuredClone(def);
-  if (!d.defaultPosition) d.defaultPosition = { ...DEFAULT_STAMP_POSITION };
-  if (!d.defaultPages) d.defaultPages = { kind: 'all' };
-  return d;
-}
-
 // ---------------------------------------------------------------- section
+
+/** "全ページ" for one placement, "2 配置" for several, "未配置" for none. */
+function describePlacements(instances: StampInstance[]): string {
+  if (instances.length === 0) return '未配置';
+  if (instances.length === 1) return describePageSelector(instances[0].pages);
+  return `${instances.length} 配置`;
+}
 
 export const stampsSection: Section = {
   id: 'stamps',
   title: 'Stamps',
+  fill: true,
   mount(root, ctrl) {
     const noWorkspace = h(
       'div',
@@ -605,15 +606,15 @@ export const stampsSection: Section = {
       button('Workspace タブへ', () => ctrl.setPrefs({ lastTab: 'workspace' }), 'btn btn-sm'),
     );
 
-    // ----- left column: definitions + instances -----
+    // ----- left column: one row per stamp -----
     const templateSelect = h('select', {});
     for (const t of BUILTIN_STAMP_TEMPLATES) templateSelect.append(h('option', { value: t.id }, t.name));
-    const defsListEl = h('ul', { class: 'list' });
+    const stampListEl = h('ul', { class: 'list' });
     const validationBox = h('div');
-    const definitionsPanel = h(
+    const listPanel = h(
       'div',
       { class: 'panel' },
-      h('h2', null, 'Stamp definitions'),
+      h('h2', null, 'Stamps'),
       h(
         'div',
         { class: 'row' },
@@ -621,64 +622,60 @@ export const stampsSection: Section = {
         button('テンプレートから追加', () => addFromTemplate(), 'btn btn-sm'),
         button('新規（空）', () => addBlank(), 'btn btn-sm'),
       ),
-      defsListEl,
+      stampListEl,
       validationBox,
     );
 
-    const instancesListEl = h('ul', { class: 'list' });
-    const addInstanceBtn = button('＋ instance', () => addInstanceForSelected(), 'btn btn-sm');
-    const instancesPanel = h(
-      'div',
-      { class: 'panel' },
-      h('h2', null, 'Instances'),
-      h('div', { class: 'row' }, addInstanceBtn),
-      instancesListEl,
-    );
-
-    // ----- right column: definition editor + instance editor -----
+    // ----- right column: the selected stamp (design + placements) -----
     const defEditorPanel = h('div', { class: 'panel' });
-    const instanceEditorPanel = h('div', { class: 'panel' });
+    const placementsPanel = h('div', { class: 'panel' });
 
-    const gridEl = h(
-      'div',
-      { class: 'grid grid-sidebar' },
-      h('div', null, definitionsPanel, instancesPanel),
-      h('div', null, defEditorPanel, instanceEditorPanel),
-    );
+    const leftCol = h('div', { class: 'scroll-col' }, listPanel);
+    const rightCol = h('div', { class: 'scroll-col' }, placementsPanel, defEditorPanel);
+    const gridEl = h('div', { class: 'grid grid-sidebar fill-layout' }, leftCol, rightCol);
 
     // ----- selection + draft bookkeeping -----
     let selectedDefId: string | undefined;
-    let selectedInstanceId: string | undefined;
 
     let draft: StampDefinition | undefined;
     let draftDefId: string | undefined;
     let savedJson: string | undefined;
 
-    let instDraftId: string | undefined;
-    let instSavedJson: string | undefined;
+    /** JSON of the selected stamp's placements as last rendered; a mismatch means they changed elsewhere. */
+    let placementsJson: string | undefined;
+    let placementsDefId: string | undefined;
+    /** Saves started from the placement editor itself: their store updates must not rebuild it mid-typing. */
+    let ownPlacementSaves = 0;
 
-    // Pending debounced-save flushers for whichever definition/instance is
-    // currently being edited, so switching the selection (or the whole
-    // section unmounting) doesn't leave up to 400ms of typing unsaved.
+    // Pending debounced-save flushers, so switching the selection doesn't
+    // leave up to 400ms of typing unsaved.
     let flushDefSave: (() => void) | undefined;
-    let flushInstSave: (() => void) | undefined;
+    let flushPlacementSaves: (() => void)[] = [];
 
     function findDef(id: string | undefined): StampDefinition | undefined {
       return id ? ctrl.state.workspace?.stamps.definitions.find((d) => d.id === id) : undefined;
     }
-    function findInst(id: string | undefined): StampInstance | undefined {
-      return id ? ctrl.state.workspace?.stamps.instances.find((i) => i.id === id) : undefined;
+    function placementsOf(id: string | undefined): StampInstance[] {
+      return id ? (ctrl.state.workspace?.stamps.instances.filter((i) => i.stampId === id) ?? []) : [];
     }
 
     function selectDef(id: string | undefined): void {
       flushDefSave?.();
+      for (const f of flushPlacementSaves) f();
       selectedDefId = id;
       applyState(ctrl.state);
+      rightCol.scrollTop = 0;
     }
-    function selectInstance(id: string | undefined): void {
-      flushInstSave?.();
-      selectedInstanceId = id;
-      applyState(ctrl.state);
+
+    /** Run a placement save without letting its own store update rebuild the editor. */
+    function savePlacement(p: Promise<void>, status?: HTMLElement): void {
+      ownPlacementSaves += 1;
+      if (status) status.textContent = '保存中…';
+      void p.finally(() => {
+        ownPlacementSaves -= 1;
+        placementsJson = JSON.stringify(placementsOf(placementsDefId));
+        if (status) status.textContent = '保存しました';
+      });
     }
 
     function addFromTemplate(): void {
@@ -699,25 +696,44 @@ export const stampsSection: Section = {
       };
       void ctrl.addDefinition(def).then(() => selectDef(def.id));
     }
-    function addInstanceForSelected(): void {
+    /** New placement of the selected stamp, starting from its last placement (or the stamp's defaults). */
+    function addPlacement(): void {
       const def = findDef(selectedDefId);
       if (!def) return;
-      void ctrl.addInstance(createInstanceFromDefinition(def));
+      const last = placementsOf(def.id).at(-1);
+      const inst = createInstanceFromDefinition(def);
+      if (last) {
+        inst.pages = structuredClone(last.pages);
+        inst.position = { ...effectivePosition(def, last) };
+      }
+      void ctrl.addInstance(inst);
     }
 
-    function renderDefsList(): void {
+    function renderStampList(): void {
       const ws = ctrl.state.workspace;
       const defs = ws?.stamps.definitions ?? [];
+      const scrollTop = leftCol.scrollTop;
       replaceChildren(
-        defsListEl,
+        stampListEl,
         defs.map((d) => {
+          const placements = placementsOf(d.id);
+          const enabledCount = placements.filter((i) => i.enabled).length;
+          const checkbox = h('input', {
+            type: 'checkbox',
+            checked: enabledCount > 0,
+            disabled: placements.length === 0,
+            title: placements.length > 1 ? 'すべての配置を有効／無効にする' : '有効',
+          });
+          checkbox.indeterminate = enabledCount > 0 && enabledCount < placements.length;
+          checkbox.addEventListener('click', (ev) => ev.stopPropagation());
+          checkbox.addEventListener('change', () => void ctrl.setStampEnabled(d.id, checkbox.checked));
           const types = [...new Set(d.layers.map((l) => l.type))];
           return h(
             'li',
             { attrs: { 'aria-selected': String(d.id === selectedDefId) }, on: { click: () => selectDef(d.id) } },
-            h('span', { class: 'name' }, d.name),
-            h('span', { class: 'muted' }, `${d.layers.length} layers`),
-            h('span', { class: 'badge' }, types.join(', ') || '(empty)'),
+            checkbox,
+            h('span', { class: 'name', title: types.join(', ') || '(レイヤーなし)' }, d.name),
+            h('span', { class: placements.length ? 'muted' : 'warn' }, describePlacements(placements)),
             h(
               'button',
               {
@@ -727,55 +743,10 @@ export const stampsSection: Section = {
                 on: {
                   click: (ev) => {
                     ev.stopPropagation();
-                    if (confirm(`「${d.name}」を削除しますか？関連する instance も削除されます。`)) {
+                    if (confirm(`スタンプ「${d.name}」を削除しますか？`)) {
                       void ctrl.removeDefinition(d.id);
                       if (selectedDefId === d.id) selectDef(undefined);
                     }
-                  },
-                },
-              },
-              '削除',
-            ),
-          );
-        }),
-      );
-      const problems = ws ? validateStampsConfig(ws.stamps) : [];
-      replaceChildren(
-        validationBox,
-        problems.length ? h('div', { class: 'alert warn' }, problems.map((p) => h('div', null, p))) : null,
-      );
-    }
-
-    function renderInstancesList(): void {
-      const ws = ctrl.state.workspace;
-      const instances = ws?.stamps.instances ?? [];
-      addInstanceBtn.disabled = !selectedDefId;
-      replaceChildren(
-        instancesListEl,
-        instances.map((inst) => {
-          const def = ws?.stamps.definitions.find((d) => d.id === inst.stampId);
-          const pos = def ? effectivePosition(def, inst) : (inst.position ?? DEFAULT_STAMP_POSITION);
-          const checkbox = h('input', { type: 'checkbox', checked: inst.enabled });
-          checkbox.addEventListener('click', (ev) => ev.stopPropagation());
-          checkbox.addEventListener('change', () => void ctrl.setInstanceEnabled(inst.id, checkbox.checked));
-          return h(
-            'li',
-            { attrs: { 'aria-selected': String(inst.id === selectedInstanceId) }, on: { click: () => selectInstance(inst.id) } },
-            checkbox,
-            h('span', { class: 'name' }, def?.name ?? inst.stampId),
-            h('span', { class: 'muted' }, describePageSelector(inst.pages)),
-            h('span', { class: 'muted' }, describePosition(pos)),
-            h(
-              'button',
-              {
-                class: 'btn btn-sm',
-                type: 'button',
-                title: '削除',
-                on: {
-                  click: (ev) => {
-                    ev.stopPropagation();
-                    void ctrl.removeInstance(inst.id);
-                    if (selectedInstanceId === inst.id) selectInstance(undefined);
                   },
                 },
               },
@@ -784,18 +755,22 @@ export const stampsSection: Section = {
           );
         }),
       );
+      leftCol.scrollTop = scrollTop;
+      const problems = ws ? validateStampsConfig(ws.stamps) : [];
+      replaceChildren(
+        validationBox,
+        problems.length ? h('div', { class: 'alert warn' }, problems.map((p) => h('div', null, p))) : null,
+      );
     }
 
     function rebuildDefEditor(): void {
       if (!draft) {
         flushDefSave = undefined;
-        replaceChildren(
-          defEditorPanel,
-          h('h2', null, '定義エディタ'),
-          h('p', { class: 'muted' }, '左のリストから編集する定義を選択してください。'),
-        );
+        replaceChildren(defEditorPanel);
+        defEditorPanel.hidden = true;
         return;
       }
+      defEditorPanel.hidden = false;
       const d = draft;
       const defStatus = h('span', { class: 'muted' });
 
@@ -836,189 +811,123 @@ export const stampsSection: Section = {
       const addLayerRow = h(
         'div',
         { class: 'row' },
-        button(
-          '＋ text',
-          () => {
-            d.layers.push(newLayer('text'));
-            scheduleSave();
-            rebuildLayers();
-          },
-          'btn btn-sm',
-        ),
-        button(
-          '＋ image',
-          () => {
-            d.layers.push(newLayer('image'));
-            scheduleSave();
-            rebuildLayers();
-          },
-          'btn btn-sm',
-        ),
-        button(
-          '＋ pageNumber',
-          () => {
-            d.layers.push(newLayer('pageNumber'));
-            scheduleSave();
-            rebuildLayers();
-          },
-          'btn btn-sm',
+        (['text', 'image', 'pageNumber'] as const).map((type) =>
+          button(
+            `＋ ${type}`,
+            () => {
+              d.layers.push(newLayer(type));
+              scheduleSave();
+              rebuildLayers();
+            },
+            'btn btn-sm',
+          ),
         ),
       );
 
-      const positionEditor = createPositionEditor(ctrl, d.defaultPosition ?? DEFAULT_STAMP_POSITION, (pos) => {
-        d.defaultPosition = pos;
-        scheduleSave();
-      });
-      const pagesEditor = createPageSelectorEditor(d.defaultPages ?? { kind: 'all' }, (sel) => {
-        d.defaultPages = sel;
-        scheduleSave();
-      });
-
       replaceChildren(
         defEditorPanel,
-        h('h2', null, `編集: ${d.name}`),
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', null, 'デザイン'), defStatus),
         field('名前', nameInput),
         field('説明', descInput),
         h('h3', null, 'レイヤー'),
         layersContainer,
         addLayerRow,
-        h('h3', null, '既定位置 (defaultPosition)'),
-        positionEditor,
-        h('h3', null, '既定ページ (defaultPages)'),
-        pagesEditor,
-        h('div', { class: 'row', style: 'margin-top:8px' }, button('保存', () => void doSave(), 'btn btn-primary btn-sm'), defStatus),
       );
     }
 
-    function rebuildInstanceEditor(): void {
-      flushInstSave = undefined;
-      const ws = ctrl.state.workspace;
-      const inst = findInst(selectedInstanceId);
-      if (!inst || !ws) {
+    function rebuildPlacements(): void {
+      flushPlacementSaves = [];
+      const def = findDef(selectedDefId);
+      placementsDefId = def?.id;
+      if (!def) {
+        placementsJson = undefined;
         replaceChildren(
-          instanceEditorPanel,
-          h('h2', null, 'Instance エディタ'),
-          h('p', { class: 'muted' }, '左の Instances リストから選択してください。'),
+          placementsPanel,
+          h('h2', null, 'スタンプを選択'),
+          h('p', { class: 'muted' }, '左のリストから編集するスタンプを選択するか，テンプレートから追加してください。'),
         );
         return;
       }
-      const def = ws.stamps.definitions.find((dd) => dd.id === inst.stampId);
-      const instStatus = h('span', { class: 'muted' });
+      const placements = placementsOf(def.id);
+      placementsJson = JSON.stringify(placements);
 
-      const enabledCheckbox = h('input', { type: 'checkbox', checked: inst.enabled });
-      enabledCheckbox.addEventListener('change', () => void ctrl.setInstanceEnabled(inst.id, enabledCheckbox.checked));
-
-      const pagesEditor = createPageSelectorEditor(inst.pages, (sel) => {
-        instStatus.textContent = '保存中…';
-        void ctrl.setInstancePages(inst.id, sel).then(() => {
-          instStatus.textContent = '保存しました';
+      const cards = placements.map((inst, idx) => {
+        const status = h('span', { class: 'muted' });
+        const enabledCheckbox = h('input', { type: 'checkbox', checked: inst.enabled });
+        enabledCheckbox.addEventListener('change', () =>
+          savePlacement(ctrl.setInstanceEnabled(inst.id, enabledCheckbox.checked), status),
+        );
+        const pagesEditor = createPageSelectorEditor(inst.pages, (sel) => savePlacement(ctrl.setInstancePages(inst.id, sel), status));
+        const debouncedPosSave = debounce((pos: StampPosition) => savePlacement(ctrl.setInstancePosition(inst.id, pos), status), 400);
+        flushPlacementSaves.push(debouncedPosSave.flush);
+        const posEditor = createPositionEditor(ctrl, effectivePosition(def, inst), (pos) => {
+          status.textContent = '未保存の変更…';
+          debouncedPosSave(pos);
         });
+        return h(
+          'div',
+          { class: 'layer' },
+          h(
+            'div',
+            { class: 'layer-header' },
+            h('label', { class: 'row' }, enabledCheckbox, placements.length > 1 ? `配置 ${idx + 1}` : '有効'),
+            status,
+            h('span', { style: 'flex:1' }),
+            button('✕', () => void ctrl.removeInstance(inst.id), 'btn btn-sm btn-danger'),
+          ),
+          h('div', { class: 'placement-body' }, field('ページ', pagesEditor), field('位置', posEditor)),
+        );
       });
 
-      let positionBlock: HTMLElement;
-      if (inst.position) {
-        const debouncedPosSave = debounce((pos: StampPosition) => {
-          instStatus.textContent = '保存中…';
-          void ctrl.setInstancePosition(inst.id, pos).then(() => {
-            instStatus.textContent = '保存しました';
-          });
-        }, 400);
-        flushInstSave = debouncedPosSave.flush;
-        const posEditor = createPositionEditor(ctrl, inst.position, debouncedPosSave);
-        positionBlock = h(
-          'div',
-          null,
-          posEditor,
-          button(
-            '定義の既定位置を使う',
-            () => {
-              void ctrl.updateStamps(
-                (cfg) => {
-                  const i = cfg.instances.find((x) => x.id === inst.id);
-                  if (i) i.position = undefined;
-                },
-                { type: EVENT_TYPES.stampUpdated, instance: inst.id },
-              );
-            },
-            'btn btn-sm',
-          ),
-        );
-      } else {
-        positionBlock = h(
-          'div',
-          null,
-          h('p', { class: 'muted' }, '定義の既定位置を使用中です。'),
-          button(
-            '位置を上書きする',
-            () => {
-              const start = def ? effectivePosition(def, inst) : DEFAULT_STAMP_POSITION;
-              void ctrl.setInstancePosition(inst.id, { ...start });
-            },
-            'btn btn-sm',
-          ),
-        );
-      }
-
       replaceChildren(
-        instanceEditorPanel,
-        h('h2', null, `Instance: ${def?.name ?? inst.stampId}`),
-        h('div', { class: 'row' }, h('label', { class: 'row' }, enabledCheckbox, '有効'), instStatus),
-        h('h3', null, 'ページ'),
-        pagesEditor,
-        h('h3', null, '位置'),
-        positionBlock,
+        placementsPanel,
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', null, def.name), button('＋ 配置を追加', () => addPlacement(), 'btn btn-sm')),
+        placements.length
+          ? cards
+          : h('div', { class: 'alert warn' }, '配置がないため，このスタンプは PDF に適用されません。「＋ 配置を追加」で追加してください。'),
+        placements.length === 1
+          ? h('p', { class: 'muted settings-note' }, '同じスタンプをページごとに違う位置へ置く場合（例: 奇数ページは右下・偶数ページは左下）は配置を追加します。')
+          : '',
       );
     }
 
     function applyState(state: AppState): void {
       const ws = state.workspace;
-      replaceChildren(root, ws ? gridEl : noWorkspace);
+      const view = ws ? gridEl : noWorkspace;
+      // Swap only when needed: re-attaching the grid would reset both columns' scroll.
+      if (root.firstChild !== view) replaceChildren(root, view);
       if (!ws) return;
 
-      renderDefsList();
-      renderInstancesList();
+      renderStampList();
 
       const def = findDef(selectedDefId);
       if (!def) {
-        if (draft !== undefined) {
+        if (draft !== undefined || !placementsPanel.hasChildNodes()) {
           draft = undefined;
           draftDefId = undefined;
           savedJson = undefined;
           rebuildDefEditor();
-        } else if (!defEditorPanel.hasChildNodes()) {
-          rebuildDefEditor();
+          rebuildPlacements();
         }
-      } else {
-        const defJson = JSON.stringify(def);
-        const selectionChanged = draftDefId !== def.id;
-        const externalChange = !selectionChanged && defJson !== savedJson;
-        if (selectionChanged || externalChange) {
-          draft = cloneDraft(def);
-          draftDefId = def.id;
-          savedJson = JSON.stringify(draft);
-          rebuildDefEditor();
-        }
+        return;
       }
 
-      const inst = findInst(selectedInstanceId);
-      if (!inst) {
-        if (instDraftId !== undefined) {
-          instDraftId = undefined;
-          instSavedJson = undefined;
-          rebuildInstanceEditor();
-        } else if (!instanceEditorPanel.hasChildNodes()) {
-          rebuildInstanceEditor();
-        }
-      } else {
-        const instJson = JSON.stringify(inst);
-        const selectionChanged = instDraftId !== inst.id;
-        const externalChange = !selectionChanged && instJson !== instSavedJson;
-        if (selectionChanged || externalChange) {
-          instDraftId = inst.id;
-          instSavedJson = instJson;
-          rebuildInstanceEditor();
-        }
+      const selectionChanged = draftDefId !== def.id;
+      if (selectionChanged || JSON.stringify(def) !== savedJson) {
+        draft = structuredClone(def);
+        draftDefId = def.id;
+        savedJson = JSON.stringify(draft);
+        rebuildDefEditor();
       }
+      const json = JSON.stringify(placementsOf(def.id));
+      if (selectionChanged || placementsDefId !== def.id || (json !== placementsJson && ownPlacementSaves === 0)) {
+        rebuildPlacements();
+      } else if (json !== placementsJson) {
+        placementsJson = json;
+      }
+      // The heading shows the (possibly just renamed) stamp name.
+      const heading = placementsPanel.querySelector('h2');
+      if (heading) heading.textContent = def.name;
     }
 
     return (state) => applyState(state);

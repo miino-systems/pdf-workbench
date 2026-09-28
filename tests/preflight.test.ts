@@ -5,8 +5,11 @@ import {
   checkMarginsByRaster,
   checkStampCollision,
   marginsForPage,
+  isLegacyReportName,
   reportFileName,
+  reportProblemCounts,
   runPreflight,
+  serializeReport,
   type ImageDataLike,
 } from '@/preflight';
 import { buildFixturePdf } from './helpers/pdf-fixtures';
@@ -195,9 +198,30 @@ describe('preflight: per-page margin overrides', () => {
 });
 
 describe('preflight/report: reportFileName', () => {
-  it('builds <basename>.<YYYYMMDDTHHMMSS>.json from a workspace-relative path', () => {
-    const date = new Date(2026, 8, 14, 10, 30, 12); // 2026-09-14 10:30:12 local
-    expect(reportFileName('papers/paper001.pdf', date)).toBe('paper001.20260914T103012.json');
+  it('builds one fixed <basename>.json per PDF from a workspace-relative path', () => {
+    expect(reportFileName('papers/paper001.pdf')).toBe('paper001.json');
+  });
+
+  it("recognises only that PDF's reports in the old <basename>.<timestamp>.json format", () => {
+    expect(isLegacyReportName('papers/paper.pdf', 'paper.20260914T103012.json')).toBe(true);
+    expect(isLegacyReportName('papers/paper.pdf', 'paper.json')).toBe(false);
+    expect(isLegacyReportName('papers/paper.pdf', 'paper.v2.json')).toBe(false);
+    expect(isLegacyReportName('papers/paper.pdf', 'paper.v2.20260914T103012.json')).toBe(false);
+    expect(isLegacyReportName('papers/a+b.pdf', 'a+b.20260914T103012.json')).toBe(true);
+    expect(isLegacyReportName('papers/a+b.pdf', 'aab.20260914T103012.json')).toBe(false);
+  });
+
+  it('cuts long finding texts to 80 characters when saved, and counts problems for the log', () => {
+    const report = {
+      file: 'papers/p.pdf', sha256: 'sha256:0', configId: 'default', ranAt: '2026-09-14T01:30:12.000Z', result: 'error' as const,
+      pageCount: 1, documentWarnings: ['PAGE_COUNT_MAX'],
+      pages: [{ page: 1, warnings: ['TOP_MARGIN', 'TEXT_OVERLAP'], findings: [{ code: 'TOP_MARGIN', source: 'text' as const, text: 'x'.repeat(200) }, { code: 'TEXT_OVERLAP', source: 'text' as const, text: 'short' }] }],
+    };
+    const saved = JSON.parse(serializeReport(report));
+    expect(saved.pages[0].findings[0].text).toBe(`${'x'.repeat(80)}…`);
+    expect(saved.pages[0].findings[1].text).toBe('short');
+    expect(report.pages[0].findings[0].text).toHaveLength(200); // the in-memory report is untouched
+    expect(reportProblemCounts(report)).toEqual({ errors: 1, warnings: 2 });
   });
 });
 

@@ -565,7 +565,7 @@ export interface PreflightPageResult {
   findings?: PreflightFinding[];
 }
 
-/** Saved into `.pdf-workbench/reports/<file>.<timestamp>.json` */
+/** Saved into `.pdf-workbench/reports/<file>.json`, overwritten by each check of that file */
 export interface PreflightReport {
   file: string; // workspace-relative source path
   sha256: string; // `sha256:<hex>`

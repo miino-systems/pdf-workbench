@@ -23,7 +23,6 @@ import type {
   PreflightWarningCode,
   Rect,
 } from '@/core/types';
-import { WORKBENCH_FILES } from '@/core/types';
 import { toPt } from '@/core/units';
 import { sha256 } from '@/crypto';
 import { EVENT_TYPES } from '@/history';
@@ -41,8 +40,11 @@ import {
   marginTolerancesPt,
   marginsForPage,
   mergeFindings,
-  reportFileName,
+  listReportNames,
+  removeReportFiles,
+  reportPath,
   runPreflight,
+  saveReportFile,
   summarizeReport,
   type DuplicateProbe,
   type ImageDataLike,
@@ -319,6 +321,7 @@ export async function runPreflightBatch(
   const ranAt = new Date();
   await ctrl.clearGeneratedDir(dir);
 
+  const reportNames = await listReportNames(ws.fs);
   const metrics = newStampMetrics(ctrl);
   const signatures = new Map<string, Promise<ImageSignature | undefined>>();
 
@@ -331,6 +334,7 @@ export async function runPreflightBatch(
     }
     if (isPreflightSkipped(config, file)) {
       items.push({ file, result: 'skipped', summary: SKIPPED_SUMMARY });
+      await removeReportFiles(ws.fs, file, reportNames);
       continue;
     }
     const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
@@ -338,8 +342,7 @@ export async function runPreflightBatch(
       const bytes = await ws.fs.readBytes(file);
       const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics, signatures, signal: opts.signal });
 
-      const reportPath = `${WORKBENCH_FILES.reportsDir}/${reportFileName(file, ranAt)}`;
-      await ws.fs.writeText(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+      const reportPath = await saveReportFile(ws.fs, report, reportNames);
       const item: PreflightBatchItem = {
         file,
         result: report.result,
@@ -423,6 +426,7 @@ export async function preflightSingle(
       result: report.result,
       summary: summarizeReport(report),
       codes: reportCodes(report),
+      report: reportPath(file), // saved by the caller (`ctrl.saveReport`)
       pageCount: report.pageCount,
       annotated,
     };
@@ -484,13 +488,15 @@ export async function setPreflightSkipped(
   if (skip) {
     const annotated = summary.items[i]?.annotated ?? ctrl.preflightCopyPathFor(file, summary.dir);
     if (await ws.fs.exists(annotated)) await ws.fs.remove(annotated);
+    await removeReportFiles(ws.fs, file);
     const item: PreflightBatchItem = { file, result: 'skipped', summary: SKIPPED_SUMMARY, codes: summary.items[i]?.codes };
     if (i >= 0) summary.items[i] = item;
     else summary.items.push(item);
     summary.counts = countResults(summary.items);
     await writeSummary(ctrl, summary);
   } else if (await ws.fs.exists(file)) {
-    await preflightSingle(ctrl, file, await ws.fs.readBytes(file), { rasterize: opts.rasterize });
+    const { report } = await preflightSingle(ctrl, file, await ws.fs.readBytes(file), { rasterize: opts.rasterize });
+    await saveReportFile(ws.fs, report);
   } else if (i >= 0) {
     summary.items.splice(i, 1);
     summary.counts = countResults(summary.items);

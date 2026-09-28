@@ -474,6 +474,8 @@ export interface PreflightConfig {
     marginRaster?: boolean;
     /** Raster-based stamp collision check (Phase 2). */
     stampCollision?: boolean;
+    /** Is a stamp's text or image already in the paper (e.g. a licence line the author added)? */
+    stampDuplicate?: boolean;
   };
 }
 
@@ -487,6 +489,7 @@ export type PreflightWarningCode =
   | 'LEFT_MARGIN'
   | 'RIGHT_MARGIN'
   | 'STAMP_COLLISION'
+  | 'STAMP_DUPLICATE'
   | string;
 
 /**

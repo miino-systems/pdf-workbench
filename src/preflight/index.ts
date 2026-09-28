@@ -1,7 +1,8 @@
 /**
  * `preflight/` — pure(ish) checks a PDF against a `PreflightConfig`: page
  * size/orientation/count (object-based, via `pdf/reader`) plus optional
- * object- and raster-based margin/collision checks.
+ * object- and raster-based margin/collision checks, and whether a stamp's
+ * content is already in the paper.
  */
 export {
   runPreflight,
@@ -24,5 +25,14 @@ export {
   type StampCollisionOptions,
   type StampCollisionResult,
 } from './raster.js';
+export {
+  findStampDuplicates,
+  findTextDuplicates,
+  imageSignature,
+  normalizeForMatch,
+  sameImage,
+  type DuplicateProbe,
+  type ImageSignature,
+} from './duplicate.js';
 export { reportFileName, summarizeReport } from './report.js';
 export { annotatePreflightPdf, describePreflightCode } from './annotate.js';

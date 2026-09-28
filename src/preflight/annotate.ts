@@ -41,6 +41,8 @@ export function describePreflightCode(code: PreflightWarningCode): string {
       return 'ページ数が最大値を超えています';
     case 'STAMP_COLLISION':
       return 'スタンプが既存の内容と重なります';
+    case 'STAMP_DUPLICATE':
+      return 'スタンプと同じ内容が原稿にすでにあります';
     default:
       return code;
   }

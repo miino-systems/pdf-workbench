@@ -64,7 +64,7 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
   if (!c.margins) c.margins = { top: 20, bottom: 20, left: 18, right: 18, unit: 'mm' };
   if (!c.page) c.page = {};
   if (!c.pages) c.pages = {};
-  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false };
+  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false, stampDuplicate: false };
   return c;
 }
 
@@ -210,6 +210,12 @@ function buildRulesForm(
     scheduleSave();
   });
 
+  const stampDuplicateCheck = h('input', { type: 'checkbox', checked: draft.checks?.stampDuplicate ?? false });
+  stampDuplicateCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, stampDuplicate: stampDuplicateCheck.checked };
+    scheduleSave();
+  });
+
   return h(
     'div',
     null,
@@ -255,6 +261,12 @@ function buildRulesForm(
       h('label', { class: 'row' }, marginTextCheck, '余白（テキストベース）'),
       h('label', { class: 'row' }, marginRasterCheck, '余白（描画ベース）'),
       h('label', { class: 'row' }, stampCollisionCheck, 'スタンプ衝突'),
+      h('label', { class: 'row' }, stampDuplicateCheck, 'スタンプ重複'),
+    ),
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      'スタンプ重複: 有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないかを調べます（テキストは語の 8 割以上が一致すれば重複，画像は大きさが違っても同じ絵なら重複）．',
     ),
     h('div', { class: 'row', style: 'margin-top:8px' }, button('保存', () => saveNowRef.save(), 'btn btn-primary btn-sm'), statusEl),
   );

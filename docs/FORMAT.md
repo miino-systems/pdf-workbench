@@ -274,7 +274,7 @@ baseline = ページ上端 − offsetY − 0.8 × size
     { "pages": { "kind": "first" }, "margins": { "top": 35 } }
   ],
   "pages": { "min": 1, "max": 6 },
-  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true }
+  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true, "stampDuplicate": true }
 }
 ```
 
@@ -303,8 +303,24 @@ baseline = ページ上端 − offsetY − 0.8 × size
   - `marginRaster`: ラスタライズした画像に基づく余白チェック
     （テキスト以外の描画も検出）。
   - `stampCollision`: スタンプが既存の描画と重ならないかのラスタベースの
-    チェック。新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
-    は 3 つとも `true` です（以前に作った Workspace の preflight.json は
+    チェック。
+  - `stampDuplicate`: 有効なスタンプと同じ内容が原稿にすでに入っていないか
+    （`STAMP_DUPLICATE`）。著者が自分でライセンス表記やロゴを入れていて、
+    スタンプを押すと二重になる場合を見つけます。スタンプを適用するページ
+    だけを調べ、見つかった場所を注釈付きコピーで赤枠にします。
+    - テキストレイヤー: 空白・改行・ハイフン（行末のハイフネーション）を
+      無視した完全一致（複数行なら 20 文字以上の各行も単独で）に加え、
+      5 語以上のテキストは、原稿の連続した部分にその**語の 8 割以上**が
+      あれば重複とみなします（大文字小文字・句読点は無視）。年の違いや
+      「Non-Commercial」と「Non Commercial」のような差があっても見つかります。
+      ページ番号レイヤーは対象外です。
+    - 画像レイヤー: 原稿に埋め込まれた画像を 16×16 に縮小した濃淡の
+      パターンと縦横比で比べるので、大きさや解像度・圧縮が違っても同じ絵
+      なら見つかります。ベクター（線や文字）で描かれたロゴは画像ではない
+      ため対象外で、同じ図柄でも版が違う（例: CC BY と CC BY-NC-ND）もの
+      は別物と判定されます。
+  - 新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
+    は 4 つとも `true` です（以前に作った Workspace の preflight.json は
     そのまま）。
 
 ---

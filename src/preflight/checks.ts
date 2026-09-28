@@ -14,6 +14,8 @@ import type {
 import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { destroyPdfDocument, loadPdfDocument } from '@/pdf/reader/document';
 import { getPageTextItems } from '@/pdf/reader/text';
+import { getPageImages } from '@/pdf/reader/images';
+import { findStampDuplicates, imageSignature, type DuplicateProbe } from './duplicate';
 import { resolvePages } from '@/stamps/pages';
 import { normalizeAngle, toVisiblePoint } from '@/pdf/stamper/rotation';
 
@@ -115,6 +117,11 @@ export interface PreflightContext {
    * flagged below the bottom margin).
    */
   onPageText?: (page: number, items: PageTextBox[]) => void;
+  /**
+   * What the stamps would add to each page, for the `STAMP_DUPLICATE`
+   * check (text or image already on the page). Omit to skip the check.
+   */
+  duplicates?: (page: number, pageCount: number) => DuplicateProbe[];
 }
 
 const DEFAULT_TOLERANCE_PT = 2;
@@ -220,7 +227,8 @@ function toVisibleRect(
  * Run the basic (Phase 2) preflight checks against a PDF: page size,
  * orientation and page count (vs `config.page`/`config.pages`), plus the
  * object-based margin check (`getPageTextItems`) when
- * `config.checks?.marginText` is true.
+ * `config.checks?.marginText` is true, and the stamp-duplicate check when
+ * `ctx.duplicates` is given.
  *
  * Page size/orientation problems are per-page (`pages[i].errors`, since
  * pages can differ in size within one document) and make the overall
@@ -234,7 +242,7 @@ export async function runPreflight(
   config: PreflightConfig,
   ctx: PreflightContext,
 ): Promise<PreflightReport> {
-  const loadDocument = ctx.loadDocument ?? loadPdfDocument;
+  const loadDocument = ctx.loadDocument ?? ((b: Uint8Array) => loadPdfDocument(b, { imagesAsData: !!ctx.duplicates }));
   const doc = await loadDocument(bytes);
 
   try {
@@ -271,15 +279,32 @@ export async function runPreflight(
 
       let warnings: PreflightWarningCode[] = [];
       const findings: PreflightFinding[] = errors.map((code) => ({ code, source: 'page' as const }));
-      if (marginTextEnabled && config.margins) {
+      const probes = ctx.duplicates?.(pageNumber, pageCount) ?? [];
+      if ((marginTextEnabled && config.margins) || probes.length > 0) {
         const angle = normalizeAngle(page.rotate);
         const raw = page.getViewport({ scale: 1, rotation: 0 });
-        const items = (await getPageTextItems(doc, pageNumber)).map((it) => toVisibleRect(it, angle, { width: raw.width, height: raw.height }));
-        const margins = marginsForPage(config.margins, config.marginOverrides, pageNumber, pageCount);
-        const found = marginFindingsForItems(items, size, margins);
-        warnings = found.codes;
-        findings.push(...found.findings);
-        ctx.onPageText?.(pageNumber, items);
+        const rawSize = { width: raw.width, height: raw.height };
+        const items = (await getPageTextItems(doc, pageNumber)).map((it) => toVisibleRect(it, angle, rawSize));
+        if (marginTextEnabled && config.margins) {
+          const margins = marginsForPage(config.margins, config.marginOverrides, pageNumber, pageCount);
+          const found = marginFindingsForItems(items, size, margins);
+          warnings = found.codes;
+          findings.push(...found.findings);
+          ctx.onPageText?.(pageNumber, items);
+        }
+        if (probes.length > 0) {
+          const images = probes.some((p) => p.images.length > 0)
+            ? (await getPageImages(doc, pageNumber)).map((img) => ({
+                rect: toVisibleRect({ str: '', ...img.rect }, angle, rawSize),
+                signature: imageSignature(img.image),
+              }))
+            : [];
+          const dup = findStampDuplicates(probes, items, images);
+          if (dup.length > 0) {
+            warnings = [...warnings, 'STAMP_DUPLICATE'];
+            findings.push(...dup);
+          }
+        }
       }
 
       pages.push({

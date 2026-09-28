@@ -5,6 +5,12 @@ import { configurePdfjsWorker } from './worker.js';
 export interface LoadPdfDocumentOptions {
   /** For password-protected PDFs. */
   password?: string;
+  /**
+   * Decode images to plain pixel data (not browser bitmaps), so
+   * `getPageImages` can read them (pdf.js otherwise hands the browser
+   * `ImageBitmap`s).
+   */
+  imagesAsData?: boolean;
 }
 
 /**
@@ -52,6 +58,7 @@ export async function loadPdfDocument(
     data: bytes.slice(),
     disableAutoFetch: true,
     password: opts.password,
+    ...(opts.imagesAsData ? { isOffscreenCanvasSupported: false, isImageDecoderSupported: false } : {}),
     ...(isBrowser
       ? {
           standardFontDataUrl: `${import.meta.env.BASE_URL}pdfjs/standard_fonts/`,

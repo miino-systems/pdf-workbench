@@ -272,7 +272,7 @@ describe('workspace initialisation and (re)loading', () => {
     // Checks default to enabled: users should be able to catch a header
     // running into the margin without first discovering and flipping a
     // checkbox (field feedback — see preflight.test.ts for the preset tests).
-    expect(config.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true });
+    expect(config.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true, stampDuplicate: true });
   });
 });
 

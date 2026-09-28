@@ -93,6 +93,10 @@
         "stampCollision": {
           "type": "boolean",
           "description": "スタンプが既存の描画（テキスト・画像・罫線など）と重ならないかのラスタベースのチェック。新規 Workspace では既定で true。"
+        },
+        "stampDuplicate": {
+          "type": "boolean",
+          "description": "有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないか（著者が入れたライセンス表記やロゴとの二重化）。新規 Workspace では既定で true。"
         }
       }
     }

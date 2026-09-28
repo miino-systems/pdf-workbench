@@ -33,7 +33,7 @@ export function reportFileName(file: string, date: Date = new Date()): string {
 export function summarizeReport(report: PreflightReport): string {
   const pageInfo = `${report.pageCount}ページ`;
   if (report.result === 'ok') {
-    return `✓ 問題なし (${pageInfo})`;
+    return `問題なし (${pageInfo})`;
   }
 
   const pagesWithErrors = report.pages.filter((p) => (p.errors?.length ?? 0) > 0).length;
@@ -46,7 +46,7 @@ export function summarizeReport(report: PreflightReport): string {
   const codeList = [...codes].join(', ');
 
   if (report.result === 'error') {
-    return `✗ エラーあり (${pagesWithErrors}/${report.pageCount}ページ): ${codeList}`;
+    return `エラーあり (${pagesWithErrors}/${report.pageCount}ページ): ${codeList}`;
   }
-  return `⚠ 警告あり (${pagesWithWarnings}/${report.pageCount}ページ): ${codeList}`;
+  return `警告あり (${pagesWithWarnings}/${report.pageCount}ページ): ${codeList}`;
 }

@@ -254,13 +254,16 @@ describe('workspace initialisation and (re)loading', () => {
     expect(state.stamps.instances).toEqual([]);
   });
 
-  it('preflight defaults are A4 portrait, 20/20/18/18mm margins, all checks off', async () => {
+  it('preflight defaults are A4 portrait, 20/20/18/18mm margins, all checks on', async () => {
     const config = createDefaultPreflightConfig();
     expect(config.id).toBe('default');
     expect(config.page?.size).toBe('A4');
     expect(config.page?.orientation).toBe('portrait');
     expect(config.margins).toEqual({ top: 20, bottom: 20, left: 18, right: 18, unit: 'mm' });
-    expect(config.checks).toEqual({ marginText: false, marginRaster: false, stampCollision: false });
+    // Checks default to enabled: users should be able to catch a header
+    // running into the margin without first discovering and flipping a
+    // checkbox (field feedback — see preflight.test.ts for the preset tests).
+    expect(config.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true });
   });
 });
 

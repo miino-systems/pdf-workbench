@@ -2,7 +2,7 @@
  * Public API of the `pdf/stamper` module (see docs/ARCHITECTURE.md §3).
  * Pure: no filesystem or DOM access anywhere in this module.
  */
-export { applyStamps } from './applyStamps';
+export { applyStamps, imageAspectWarning } from './applyStamps';
 export type { StampJobInput, StampJobResult } from './types';
 export {
   measureStamp,
@@ -10,6 +10,7 @@ export {
   estimateStampBox,
   computeLayerBox,
   unionLayerBoxes,
+  arrangeLayerBoxes,
   estimateTextWidth,
   fontMetricsKey,
   type Box,
@@ -19,6 +20,7 @@ export {
   type ImageSize,
   type MeasureContext,
 } from './measure';
+export { StampMetrics, imageNaturalSize, type StampMetricsSources } from './metrics';
 export { layoutTextBlock, DEFAULT_LINE_HEIGHT_FACTOR, type TextBlockLayout } from './sanitize';
 export {
   normalizeAngle,

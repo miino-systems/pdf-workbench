@@ -2,7 +2,9 @@ import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type {
   PageSize,
   PreflightConfig,
+  PreflightFinding,
   PreflightMargins,
+  PreflightMarginOverride,
   PreflightPageResult,
   PreflightReport,
   PreflightSeverity,
@@ -11,6 +13,11 @@ import type {
 import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { destroyPdfDocument, loadPdfDocument } from '@/pdf/reader/document';
 import { getPageTextItems } from '@/pdf/reader/text';
+import { resolvePages } from '@/stamps/pages';
+import { normalizeAngle, toVisiblePoint } from '@/pdf/stamper/rotation';
+
+/** At most this many located findings are kept per page (the codes still count every hit). */
+export const MAX_FINDINGS_PER_PAGE = 40;
 
 export interface PreflightContext {
   /** Workspace-relative source path, stored verbatim into the report. */
@@ -42,6 +49,26 @@ function matchesPaperSize(
   return straight || rotated;
 }
 
+/**
+ * Resolve the effective margins for one page: `base` with any matching
+ * `PreflightMarginOverride.margins` side applied on top (later entries in
+ * `overrides` win when several match the same page).
+ */
+export function marginsForPage(
+  base: PreflightMargins,
+  overrides: PreflightMarginOverride[] | undefined,
+  pageNumber: number,
+  pageCount: number,
+): PreflightMargins {
+  if (!overrides || overrides.length === 0) return base;
+  let effective = base;
+  for (const override of overrides) {
+    if (!resolvePages(override.pages, pageCount).includes(pageNumber)) continue;
+    effective = { ...effective, ...override.margins };
+  }
+  return effective;
+}
+
 type Orientation = 'portrait' | 'landscape' | 'square';
 
 function actualOrientation(size: PageSize): Orientation {
@@ -50,18 +77,23 @@ function actualOrientation(size: PageSize): Orientation {
   return 'square';
 }
 
-/** Which margin bands (top/bottom/left/right) does any non-blank text item enter? */
-function marginCodesForItems(
+/**
+ * Which margin bands (top/bottom/left/right) do non-blank text items enter?
+ * Items are in the page's visible frame. Returns the codes and one located
+ * finding per offending item and band.
+ */
+function marginFindingsForItems(
   items: { str: string; x: number; y: number; width: number; height: number }[],
   pageSize: PageSize,
   margins: PreflightMargins,
-): PreflightWarningCode[] {
+): { codes: PreflightWarningCode[]; findings: PreflightFinding[] } {
   const topPt = toPt(margins.top, margins.unit);
   const bottomPt = toPt(margins.bottom, margins.unit);
   const leftPt = toPt(margins.left, margins.unit);
   const rightPt = toPt(margins.right, margins.unit);
 
   const codes = new Set<PreflightWarningCode>();
+  const findings: PreflightFinding[] = [];
   for (const item of items) {
     if (item.str.trim() === '') continue; // ignore empty/whitespace-only runs
     const top = item.y + item.height;
@@ -69,12 +101,29 @@ function marginCodesForItems(
     const left = item.x;
     const right = item.x + item.width;
 
-    if (top > pageSize.height - topPt) codes.add('TOP_MARGIN');
-    if (bottom < bottomPt) codes.add('BOTTOM_MARGIN');
-    if (left < leftPt) codes.add('LEFT_MARGIN');
-    if (right > pageSize.width - rightPt) codes.add('RIGHT_MARGIN');
+    const hits: PreflightWarningCode[] = [];
+    if (top > pageSize.height - topPt) hits.push('TOP_MARGIN');
+    if (bottom < bottomPt) hits.push('BOTTOM_MARGIN');
+    if (left < leftPt) hits.push('LEFT_MARGIN');
+    if (right > pageSize.width - rightPt) hits.push('RIGHT_MARGIN');
+    for (const code of hits) {
+      codes.add(code);
+      findings.push({ code, source: 'text', rect: { x: left, y: bottom, width: item.width, height: item.height }, text: item.str });
+    }
   }
-  return [...codes];
+  return { codes: [...codes], findings };
+}
+
+/** A text run's box moved from the page's content space into its visible (rotated) frame. */
+function toVisibleRect(
+  item: { str: string; x: number; y: number; width: number; height: number },
+  angle: ReturnType<typeof normalizeAngle>,
+  raw: PageSize,
+): { str: string; x: number; y: number; width: number; height: number } {
+  if (angle === 0) return item;
+  const a = toVisiblePoint({ x: item.x, y: item.y }, angle, raw);
+  const b = toVisiblePoint({ x: item.x + item.width, y: item.y + item.height }, angle, raw);
+  return { str: item.str, x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) };
 }
 
 /**
@@ -131,9 +180,15 @@ export async function runPreflight(
       }
 
       let warnings: PreflightWarningCode[] = [];
+      const findings: PreflightFinding[] = errors.map((code) => ({ code, source: 'page' as const }));
       if (marginTextEnabled && config.margins) {
-        const items = await getPageTextItems(doc, pageNumber);
-        warnings = marginCodesForItems(items, size, config.margins);
+        const angle = normalizeAngle(page.rotate);
+        const raw = page.getViewport({ scale: 1, rotation: 0 });
+        const items = (await getPageTextItems(doc, pageNumber)).map((it) => toVisibleRect(it, angle, { width: raw.width, height: raw.height }));
+        const margins = marginsForPage(config.margins, config.marginOverrides, pageNumber, pageCount);
+        const found = marginFindingsForItems(items, size, margins);
+        warnings = found.codes;
+        findings.push(...found.findings);
       }
 
       pages.push({
@@ -141,6 +196,7 @@ export async function runPreflight(
         warnings,
         errors: errors.length > 0 ? errors : undefined,
         details: { width: size.width, height: size.height, rotation: page.rotate },
+        findings: findings.length ? findings.slice(0, MAX_FINDINGS_PER_PAGE) : undefined,
       });
     }
 

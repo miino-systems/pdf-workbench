@@ -26,7 +26,8 @@ const FORBIDDEN: { re: RegExp; why: string }[] = [
   { re: /\bsendBeacon\b/, why: 'navigator.sendBeacon' },
   { re: /\bEventSource\b/, why: 'EventSource' },
   { re: /\bRTCPeerConnection\b/, why: 'WebRTC' },
-  { re: /https?:\/\/(?!example\.org)[a-z0-9.-]+\.(com|net|org|io|dev|jp)\//i, why: 'remote URL' },
+  // www.w3.org/2000/svg is the SVG XML namespace identifier (createElementNS), never fetched.
+  { re: /https?:\/\/(?!example\.org|www\.w3\.org\/2000\/svg)[a-z0-9.-]+\.(com|net|org|io|dev|jp)\//i, why: 'remote URL' },
   { re: /\bgithub\.com\/login\/oauth|api\.github\.com|gitlab\.com\/api/i, why: 'git hosting API' },
   { re: /isomorphic-git/, why: 'git remote transport' },
 ];

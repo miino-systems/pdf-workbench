@@ -14,3 +14,4 @@ export { renderPageNumber, type PageNumberContext } from './template';
 export { createId, createInstanceFromDefinition, BUILTIN_STAMP_TEMPLATES } from './templates';
 export { validateStampsConfig } from './validate';
 export { parseHexColor, isValidHexColor, type RgbColor, FALLBACK_COLOR } from './color';
+export { stampsFingerprint } from './fingerprint';

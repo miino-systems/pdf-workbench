@@ -11,6 +11,7 @@ import type { DisplayUnit, Theme } from '@/state/prefs';
 import { basename, stripExtension } from '@/workspace';
 import { PRIVACY_NOTICE, type Section } from '../app';
 import { h, replaceChildren } from '../dom';
+import { icon } from '../icons';
 
 export const settingsSection: Section = {
   id: 'settings',
@@ -156,7 +157,7 @@ export const settingsSection: Section = {
       'div',
       { class: 'panel' },
       h('h2', null, 'プライバシー'),
-      h('p', null, '🔒 ', PRIVACY_NOTICE),
+      h('p', { class: 'privacy-notice' }, icon('lock'), PRIVACY_NOTICE),
       h(
         'table',
         null,

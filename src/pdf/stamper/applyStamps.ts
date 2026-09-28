@@ -12,7 +12,7 @@ import type { FontRef, ImageLayer, ResolvedFont, StampLayer } from '@/core/types
 import { effectivePosition, renderPageNumber, resolvePages, resolveStampOrigin } from '@/stamps';
 import { parseHexColor } from '@/stamps/color';
 import { toPdfLibStandardFont } from '@/fonts/standard';
-import { fontMetricsKey, unionLayerBoxes, type LayerBox } from './measure';
+import { arrangeLayerBoxes, fontMetricsKey, unionLayerBoxes, type LayerBox } from './measure';
 import { normalizeAngle, toContentPoint, visiblePageSize } from './rotation';
 import { layoutTextBlock } from './sanitize';
 import type { StampJobInput, StampJobResult } from './types';
@@ -160,10 +160,12 @@ export async function applyStamps(input: StampJobInput): Promise<StampJobResult>
       }
       if (drawables.length === 0) continue;
 
-      const union = unionLayerBoxes(drawables.map((d) => d.box));
+      const boxes = arrangeLayerBoxes(drawables.map((d) => d.box), def.layout);
+      const union = unionLayerBoxes(boxes);
       const origin = resolveStampOrigin(position, visible, union);
 
-      for (const { box, draw } of drawables) {
+      for (const [i, { draw }] of drawables.entries()) {
+        const box = boxes[i];
         const visibleOrigin = {
           x: origin.x + (box.dx - union.x),
           y: origin.y + (box.dy - union.y),
@@ -213,11 +215,13 @@ async function buildDrawableLayer(
         : layer.text;
 
     const { font } = fontEntry;
-    const { lines, lineHeight } = layoutTextBlock(text, layer.size);
+    const { lines, lineHeight } = layoutTextBlock(text, layer.size, layer.lineHeight);
 
     let width: number;
+    let lineWidths: number[];
     try {
-      width = lines.reduce((max, line) => Math.max(max, font.widthOfTextAtSize(line, layer.size)), 0);
+      lineWidths = lines.map((line) => font.widthOfTextAtSize(line, layer.size));
+      width = Math.max(0, ...lineWidths);
     } catch (err) {
       ctx.warnings.push(
         `text contains characters not supported by standard font ${describeFontRef(fontEntry.resolved.ref)}; ` +
@@ -237,20 +241,37 @@ async function buildDrawableLayer(
         // the ascent as 0.8em and descent as 0.2em, which is close enough
         // for the general-purpose stamps this module draws.
         const baselineY = contentOrigin.y + box.height - layer.size * 0.8;
-        ctx.page.drawText(text, {
-          x: contentOrigin.x,
-          y: baselineY,
+        // `pageAngle` is how far the *page* rotates the content clockwise
+        // when displayed; the glyph must be rotated the opposite amount
+        // further (i.e. `+ pageAngle` in content space) so that, once the
+        // page's own rotation is applied, it appears rotated by exactly
+        // `layer.rotate` (CCW) to the viewer.
+        const angle = (layer.rotate ?? 0) + pageAngle;
+        const options = {
           font,
           size: layer.size,
           color: rgb(color.r, color.g, color.b),
           opacity: layer.opacity,
           lineHeight,
-          // `pageAngle` is how far the *page* rotates the content clockwise
-          // when displayed; the glyph must be rotated the opposite amount
-          // further (i.e. `+ pageAngle` in content space) so that, once the
-          // page's own rotation is applied, it appears rotated by exactly
-          // `layer.rotate` (CCW) to the viewer.
-          rotate: degrees((layer.rotate ?? 0) + pageAngle),
+          rotate: degrees(angle),
+        };
+        const align = layer.align ?? 'left';
+        if (align === 'left') {
+          ctx.page.drawText(text, { ...options, x: contentOrigin.x, y: baselineY });
+          return;
+        }
+        // Centred / right-aligned: draw line by line, each shifted within the
+        // block (as wide as its longest line) along the rotated text axes.
+        const rad = (angle * Math.PI) / 180;
+        const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
+        lines.forEach((line, i) => {
+          const ox = (width - lineWidths[i]) * (align === 'center' ? 0.5 : 1);
+          const oy = -i * lineHeight;
+          ctx.page.drawText(line, {
+            ...options,
+            x: contentOrigin.x + ox * cos - oy * sin,
+            y: baselineY + ox * sin + oy * cos,
+          });
         });
       },
     };
@@ -266,6 +287,8 @@ async function buildDrawableLayer(
       throw err instanceof Error ? err : new Error(String(err));
     }
     const { width, height } = resolveImageBoxSize(layer, image);
+    const aspectWarning = imageAspectWarning(layer, image);
+    if (aspectWarning && !ctx.warnings.includes(aspectWarning)) ctx.warnings.push(aspectWarning);
     const box: LayerBox = { dx: layer.dx ?? 0, dy: layer.dy ?? 0, width, height };
 
     return {
@@ -299,6 +322,25 @@ function resolveImageBoxSize(layer: ImageLayer, image: PDFImage): { width: numbe
     return { width: layer.height * (image.width / image.height), height: layer.height };
   }
   return { width: image.width, height: image.height };
+}
+
+/** Tolerance before a width+height pair counts as distorting the image. */
+const ASPECT_TOLERANCE = 0.02;
+
+/**
+ * Warning when both width and height are given and they stretch the image
+ * (more than 2% off its own aspect ratio); undefined otherwise.
+ */
+export function imageAspectWarning(layer: ImageLayer, natural: { width: number; height: number }): string | undefined {
+  if (layer.width === undefined || layer.height === undefined || natural.width <= 0 || natural.height <= 0) return undefined;
+  const wanted = layer.width / layer.height;
+  const actual = natural.width / natural.height;
+  if (Math.abs(wanted - actual) / actual <= ASPECT_TOLERANCE) return undefined;
+  const keepHeight = Math.round((layer.width / actual) * 10) / 10;
+  return (
+    `画像 ${layer.src} の縦横比が元画像と違います（指定 ${layer.width}×${layer.height} pt，元画像 ${natural.width}×${natural.height} px）．` +
+    `幅か高さの片方だけを指定すると縦横比が保たれます（幅 ${layer.width} pt なら高さ ${keepHeight} pt）`
+  );
 }
 
 function requireBytes(resolved: ResolvedFont): Uint8Array {

@@ -9,7 +9,7 @@
  *  - {@link estimateStampBox}: a cheap heuristic (`0.55 * size * chars`) that
  *    needs no pdf-lib document at all, for live position previews in the UI.
  */
-import type { FontRef, StampDefinition, StampLayer } from '@/core/types';
+import type { FontRef, StampDefinition, StampLayer, StampLayout } from '@/core/types';
 import { renderPageNumber } from '@/stamps';
 import { layoutTextBlock } from './sanitize';
 
@@ -89,7 +89,7 @@ export function computeLayerBox(layer: StampLayer, ctx: MeasureContext = {}): La
         : layer.text;
 
     const metrics = ctx.fonts?.get(fontMetricsKey(layer.font));
-    const { lines, height: estimatedHeight } = layoutTextBlock(text, layer.size);
+    const { lines, height: estimatedHeight } = layoutTextBlock(text, layer.size, layer.lineHeight);
     const width = metrics
       ? lines.reduce((max, line) => Math.max(max, metrics.widthOfTextAtSize(line, layer.size)), 0)
       : estimateTextWidth(text, layer.size);
@@ -143,18 +143,52 @@ export function unionLayerBoxes(boxes: LayerBox[]): UnionBox {
   return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-/** Measure a definition's overall bounding box using real font/image metrics. */
-export function measureLayers(layers: StampLayer[], ctx: MeasureContext = {}): Box {
+/**
+ * Place layer boxes per a definition's `layout` (see `StampLayout`): the
+ * incoming dx/dy are the layers' own nudges, the returned boxes carry their
+ * final offsets from the stamp's nominal origin. Without a layout the boxes
+ * are returned as they are (all layers at the origin + their dx/dy).
+ * Shared by `applyStamps` and the UI overlay so both agree exactly.
+ */
+export function arrangeLayerBoxes(boxes: LayerBox[], layout?: StampLayout): LayerBox[] {
+  if (!layout || boxes.length === 0) return boxes;
+  const gap = layout.gap ?? 0;
+  const align = layout.align ?? 'center';
+  const cross = (space: number, size: number): number =>
+    align === 'start' ? 0 : align === 'center' ? (space - size) / 2 : space - size;
+  if (layout.direction === 'row') {
+    const maxH = Math.max(...boxes.map((b) => b.height));
+    let x = 0;
+    return boxes.map((b) => {
+      // `start` = top: measure the cross offset down from the tallest box's top.
+      const placed = { ...b, dx: x + b.dx, dy: maxH - b.height - cross(maxH, b.height) + b.dy };
+      x += b.width + gap;
+      return placed;
+    });
+  }
+  const maxW = Math.max(...boxes.map((b) => b.width));
+  const total = boxes.reduce((sum, b) => sum + b.height, 0) + gap * (boxes.length - 1);
+  let top = total;
+  return boxes.map((b) => {
+    top -= b.height;
+    const placed = { ...b, dx: cross(maxW, b.width) + b.dx, dy: top + b.dy };
+    top -= gap;
+    return placed;
+  });
+}
+
+/** Measure a set of layers' overall bounding box (arranged per `layout`) using real font/image metrics. */
+export function measureLayers(layers: StampLayer[], ctx: MeasureContext = {}, layout?: StampLayout): Box {
   const boxes = layers
     .map((layer) => computeLayerBox(layer, ctx))
     .filter((b): b is LayerBox => b !== undefined);
-  const { width, height } = unionLayerBoxes(boxes);
+  const { width, height } = unionLayerBoxes(arrangeLayerBoxes(boxes, layout));
   return { width, height };
 }
 
 /** Async wrapper matching the `pdf/stamper` module contract's signature. */
 export async function measureStamp(def: StampDefinition, ctx: MeasureContext = {}): Promise<Box> {
-  return measureLayers(def.layers, ctx);
+  return measureLayers(def.layers, ctx, def.layout);
 }
 
 /**
@@ -165,5 +199,5 @@ export function estimateStampBox(
   def: StampDefinition,
   ctx: { page?: number; pages?: number; file?: string } = {},
 ): Box {
-  return measureLayers(def.layers, ctx);
+  return measureLayers(def.layers, ctx, def.layout);
 }

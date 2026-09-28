@@ -90,6 +90,42 @@ describe('parseSequenceCsv (source → output mapping)', () => {
     const res = parseSequenceCsv('"my, paper.pdf","out, 1.pdf"\n', { papersDir: 'papers' });
     expect(res.config.entries).toEqual([{ file: 'papers/my, paper.pdf', output: 'out, 1.pdf' }]);
   });
+
+  it('an unrecognised-but-named header (old_name/new_name) is still excluded and counted correctly', () => {
+    const text = 'Session Code,old_name,new_name\nA1-01,9002.pdf,NOLTA-A1-01.pdf\nA1-02,9003.pdf,NOLTA-A1-02.pdf\n';
+    const res = parseSequenceCsv(text, { papersDir: 'papers' });
+    expect(res.header).toEqual(['Session Code', 'old_name', 'new_name']);
+    expect(res.columns).toEqual([undefined, 'source', 'output']);
+    expect(res.rows).toBe(2);
+    expect(res.config.entries).toEqual([
+      { file: 'papers/9002.pdf', output: 'NOLTA-A1-01.pdf' },
+      { file: 'papers/9003.pdf', output: 'NOLTA-A1-02.pdf' },
+    ]);
+    // The "Session Code" column looks like the order's real sort key.
+    expect(res.sortKey).toBe('Session Code');
+  });
+
+  it('a header with names we do not recognise at all is still detected by column shape, not imported as data', () => {
+    const text = 'Notes,ColA,ColB\nfoo,paper1.pdf,out1.pdf\nbar,paper2.pdf,out2.pdf\n';
+    const res = parseSequenceCsv(text, { papersDir: 'papers' });
+    expect(res.header).toEqual(['Notes', 'ColA', 'ColB']);
+    expect(res.columns).toEqual([undefined, 'source', 'output']);
+    expect(res.rows).toBe(2);
+    expect(res.config.entries).toEqual([
+      { file: 'papers/paper1.pdf', output: 'out1.pdf' },
+      { file: 'papers/paper2.pdf', output: 'out2.pdf' },
+    ]);
+  });
+
+  it('no header at all: the first row is data, columns stay positional', () => {
+    const res = parseSequenceCsv('paper1.pdf,A.pdf\npaper2.pdf,B.pdf\n', { papersDir: 'papers' });
+    expect(res.header).toBeUndefined();
+    expect(res.rows).toBe(2);
+    expect(res.config.entries).toEqual([
+      { file: 'papers/paper1.pdf', output: 'A.pdf' },
+      { file: 'papers/paper2.pdf', output: 'B.pdf' },
+    ]);
+  });
 });
 
 describe('parseSequenceJson / normalizeSequenceConfig', () => {
@@ -131,6 +167,19 @@ describe('parseSequenceJson / normalizeSequenceConfig', () => {
     expect(importSequenceText('  {"entries":[]}', OPTS).format).toBe('json');
     expect(importSequenceText('paper001.pdf,A.pdf', OPTS).format).toBe('csv');
     expect(() => importSequenceText('{not json', OPTS)).toThrow();
+  });
+
+  it('keeps a valid origin, drops an invalid one', () => {
+    const valid = { kind: 'import', source: 'rename_map.csv', format: 'csv', importedAt: '2026-09-28T10:00:00+09:00', sortKey: 'Session Code', rows: 281 };
+    const kept = normalizeSequenceConfig({ entries: ['a.pdf'], origin: valid });
+    expect(kept.config.origin).toEqual(valid);
+    expect(kept.problems).toEqual([]);
+
+    const dropped = normalizeSequenceConfig({ entries: ['a.pdf'], origin: { kind: 'not-a-kind' } });
+    expect(dropped.config.origin).toBeUndefined();
+    expect(dropped.problems).toEqual(['origin.kind "not-a-kind" は import / manual / name のいずれかである必要があります（origin を無視）']);
+
+    expect(normalizeSequenceConfig({ entries: ['a.pdf'] }).config.origin).toBeUndefined();
   });
 });
 
@@ -196,6 +245,13 @@ describe('sequence.json written by a script', () => {
       source: 'order.csv',
       format: 'csv',
       entries: 3,
+      headerSkipped: true,
+      rows: 3,
     });
+    // Origin is recorded (source file, format, when, and how many rows) and
+    // persisted with the rest of sequence.json.
+    expect(ctrl.requireWorkspace().sequence.origin).toMatchObject({ kind: 'import', source: 'order.csv', format: 'csv', rows: 3, sortKey: 'file order' });
+    expect(ctrl.requireWorkspace().sequence.origin?.importedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/);
+    expect(JSON.parse(await ws.fs.readText(WORKBENCH_FILES.sequence)).origin).toMatchObject({ kind: 'import', source: 'order.csv' });
   });
 });

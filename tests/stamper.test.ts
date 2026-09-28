@@ -394,7 +394,8 @@ describe('applyStamps', () => {
       resolveFont: async (ref) => ({ ref, hashMismatch: false }),
       resolveImage: async () => tinyPngBytes(),
     });
-    expect(result.warnings).toEqual([]);
+    // The 1×1 fixture is deliberately stretched to 20×8 pt; only that aspect-ratio note is expected.
+    expect(result.warnings.filter((w) => !w.includes('縦横比'))).toEqual([]);
 
     const output = await PDFDocument.load(result.bytes);
     const outPage = output.getPage(0);

@@ -8,19 +8,36 @@
  * `pdf/stamper/measure` so the overlay matches what `applyStamps` will
  * actually draw.
  */
-import type { PageSize, StampPosition, StampsConfig } from '@/core/types';
+import type { PageSize, StampDefinition, StampPosition, StampsConfig } from '@/core/types';
 import { checkStampCollision } from '@/preflight';
 import { PdfRenderer, canvasToPdf, pdfToCanvas } from '@/pdf/renderer';
-import { estimateStampBox } from '@/pdf/stamper/measure';
+import { StampMetrics, measureLayers, type Box } from '@/pdf/stamper';
 import { describeRange, sequenceItemFor } from '@/sequence';
 import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
-import { STATUS_LABEL, type AppState, type PdfFileItem } from '@/state/app';
-import { generateStampedPdf } from '@/state/generate';
+import { NEEDS_UPDATE_STATUSES, STATUS_LABEL, isUpToDate, type AppState, type FileStatus, type PdfFileItem } from '@/state/app';
+import { createFontResolver, generateStampedPdf } from '@/state/generate';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
-import { button, formatBytes, h, replaceChildren } from '../dom';
+import { button, formatBytes, h, iconButton, replaceChildren } from '../dom';
+import { icon, type IconName } from '../icons';
 
 const ZOOM_OPTIONS = [50, 75, 100, 150, 200];
+
+/**
+ * File list groups, in display order: work still to do first, files whose
+ * output is current at the bottom (so the list reads as a to-do list).
+ */
+const FILE_GROUPS: { id: string; label: string; test: (s: FileStatus) => boolean }[] = [
+  { id: 'update', label: '要更新', test: (s) => NEEDS_UPDATE_STATUSES.has(s) },
+  { id: 'error', label: 'エラー', test: (s) => s === 'error' },
+  { id: 'todo', label: '未処理', test: (s) => s === 'not-processed' },
+  { id: 'done', label: '最新', test: isUpToDate },
+];
+
+/** Files that 全ファイルを処理 regenerates: everything not up to date (or everything, when forced). */
+function filesToProcess(files: PdfFileItem[], all: boolean): PdfFileItem[] {
+  return all ? files : files.filter((f) => !isUpToDate(f.status));
+}
 
 /**
  * The number a page-number stamp would show on physical page `page` of the
@@ -35,6 +52,7 @@ function displayedPageNumber(state: AppState, page: number): number {
 export const pdfSection: Section = {
   id: 'pdf',
   title: 'PDF',
+  fill: true,
   mount(root, ctrl) {
     // ---------------------------------------------------------- sidebar
     // The file list scrolls on its own so the whole tab fits in one screen.
@@ -60,8 +78,8 @@ export const pdfSection: Section = {
       },
     });
     const pageCountLabel = h('span', { class: 'muted' }, '/ 0');
-    const prevBtn = button('◀', () => ctrl.setPage(ctrl.state.currentPage - 1), 'btn btn-sm');
-    const nextBtn = button('▶', () => ctrl.setPage(ctrl.state.currentPage + 1), 'btn btn-sm');
+    const prevBtn = iconButton('chevron-left', '前のページ', () => ctrl.setPage(ctrl.state.currentPage - 1));
+    const nextBtn = iconButton('chevron-right', '次のページ', () => ctrl.setPage(ctrl.state.currentPage + 1));
 
     const zoomSelect = h(
       'select',
@@ -119,7 +137,7 @@ export const pdfSection: Section = {
 
     const previewPanel = h('div', { class: 'panel pdf-preview' }, h('h2', null, 'Preview'), toolbar, collisionMsg, previewWrap);
 
-    root.append(h('div', { class: 'grid grid-sidebar pdf-layout' }, sidebar, previewPanel));
+    root.append(h('div', { class: 'grid grid-sidebar fill-layout' }, sidebar, previewPanel));
 
     // ------------------------------------------------------- render state
     let latestState: AppState = ctrl.state;
@@ -130,6 +148,9 @@ export const pdfSection: Section = {
     let lastPageSize: PageSize | undefined;
     let showOverlay = true;
     let collidingIds = new Set<string>();
+    /** Real font/image metrics for the overlay, per loaded workspace (a reload creates a fresh one). */
+    let metrics: StampMetrics | undefined;
+    let metricsWorkspaceFs: unknown;
 
     let lastFilesSnapshot: PdfFileItem[] | undefined;
     let lastSequenceRef: AppState['sequence'];
@@ -138,6 +159,33 @@ export const pdfSection: Section = {
     let lastStampsRef: StampsConfig | undefined;
     let lastRenderedPage = 0;
     let lastRenderedZoom = 0;
+
+    /**
+     * The box `applyStamps` will draw for `def`, measured with the real fonts
+     * and image sizes once they are loaded (the heuristic estimate until then;
+     * loading triggers a redraw).
+     */
+    function measureBox(state: AppState, def: StampDefinition, page: number, file: string | undefined): Box {
+      const ws = state.workspace;
+      if (ws && metricsWorkspaceFs !== ws.fs) {
+        metricsWorkspaceFs = ws.fs;
+        metrics = new StampMetrics({
+          resolveFont: (ref) => createFontResolver(ctrl).resolve(ref),
+          readImage: (src) => ws.fs.readBytes(src),
+        });
+      }
+      const m = metrics;
+      if (m && ws) {
+        void m.prepare(ws.stamps.definitions).then((loaded) => {
+          if (loaded && m === metrics) drawOverlay(latestState);
+        });
+      }
+      return measureLayers(
+        def.layers,
+        { page: displayedPageNumber(state, page), pages: state.pageCount, file, fonts: m?.fonts, images: m?.images },
+        def.layout,
+      );
+    }
 
     function setHasFile(has: boolean): void {
       previewPage.hidden = !has;
@@ -221,7 +269,7 @@ export const pdfSection: Section = {
           const pages = resolvePages(inst.pages, state.pageCount);
           if (!pages.includes(page)) continue;
 
-          const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
+          const box = measureBox(state, def, page, file);
           const position = effectivePosition(def, inst);
           const rect = stampRect(position, pageSize, box);
           const topLeft = pdfToCanvas({ x: rect.x, y: rect.y + rect.height }, pageSize, scale);
@@ -329,7 +377,7 @@ export const pdfSection: Section = {
         if (!def) continue;
         const pages = resolvePages(inst.pages, state.pageCount);
         if (!pages.includes(page)) continue;
-        const box = estimateStampBox(def, { page: displayedPageNumber(state, page), pages: state.pageCount, file });
+        const box = measureBox(state, def, page, file);
         const position = effectivePosition(def, inst);
         const rect = stampRect(position, pageSize, box);
         const result = checkStampCollision(imageData, pageSize, rect);
@@ -344,11 +392,23 @@ export const pdfSection: Section = {
 
     function renderFiles(state: AppState): void {
       const ws = state.workspace;
+      const groups = FILE_GROUPS.map((g) => ({ ...g, files: state.files.filter((f) => g.test(f.status)) }));
       replaceChildren(
         filesHeader,
         h('h2', null, 'PDF Files', ws && state.files.length ? h('span', { class: 'muted' }, ` (${state.files.length})`) : ''),
-        ws ? button('🔄 再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm') : '',
+        ws ? button('再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm', 'refresh-cw') : '',
+        ws && state.files.length
+          ? h(
+              'div',
+              { class: 'file-counts' },
+              groups.filter((g) => g.files.length).map((g) => h('span', { class: `file-count ${g.id}` }, `${g.label} ${g.files.length}`)),
+            )
+          : '',
       );
+      // Within a group keep the numbering order (sequence), else name order.
+      const orderIndex = new Map((state.sequence?.items ?? []).map((it, i) => [it.file, i]));
+      const byOrder = (a: PdfFileItem, b: PdfFileItem): number =>
+        (orderIndex.get(a.path) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(b.path) ?? Number.MAX_SAFE_INTEGER);
       const children: (HTMLElement | string)[] = [];
       if (!ws) {
         children.push(
@@ -360,26 +420,33 @@ export const pdfSection: Section = {
         children.push(
           h(
             'ul',
-            { class: 'list' },
-            state.files.map((f) => {
+            { class: 'list file-list' },
+            groups.flatMap((g) => [
+              g.files.length && groups.some((o) => o !== g && o.files.length)
+                ? h('li', { class: `file-group ${g.id}`, attrs: { role: 'presentation' } }, `${g.label}（${g.files.length}）`)
+                : '',
+              ...[...g.files].sort(byOrder).map((f) => {
               const label = STATUS_LABEL[f.status];
               const range = sequenceItemFor(state.sequence, f.path);
               return h(
                 'li',
                 {
+                  class: g.id === 'update' ? 'needs-update' : '',
                   dataset: { path: f.path },
                   attrs: { role: 'option', 'aria-selected': String(f.path === state.selectedFile) },
                   title: label.text,
                   on: { click: () => void ctrl.selectFile(f.path) },
                 },
-                h('span', { class: `badge ${label.cls}` }, label.icon),
+                h('span', { class: `status-icon ${label.cls}` }, icon(label.icon as IconName, { label: label.text })),
                 h('span', { class: 'name' }, f.name),
+                g.id === 'update' ? h('span', { class: 'update-chip' }, '要更新') : '',
                 range && !range.skipped && range.pageStart !== undefined
                   ? h('span', { class: 'muted mono', title: '通しページ番号（Sequence タブ）' }, describeRange(range))
                   : '',
                 h('span', { class: 'muted' }, formatBytes(f.size)),
               );
-            }),
+              }),
+            ]),
           ),
         );
       }
@@ -435,7 +502,15 @@ export const pdfSection: Section = {
               return h(
                 'li',
                 null,
-                h('label', { class: 'row', style: 'flex:1' }, checkbox, h('span', { class: 'name' }, def?.name ?? inst.stampId)),
+                h(
+                  'label',
+                  { class: 'row', style: 'flex:1' },
+                  checkbox,
+                  h('span', { class: 'name' }, def?.name ?? inst.stampId),
+                  inst.position
+                    ? h('span', { class: 'muted', title: '独自の位置（ドラッグ等で設定）: 定義の既定位置より優先されます．Stamps タブで既定位置に戻せます' }, icon('pin', { label: '独自の位置' }))
+                    : '',
+                ),
                 h('span', { class: 'muted' }, describePageSelector(inst.pages)),
               );
             }),
@@ -453,7 +528,7 @@ export const pdfSection: Section = {
         children.push(h('p', { class: 'muted' }, 'ファイルを選択してください．'));
       } else {
         if (file?.status === 'source-changed') {
-          children.push(h('div', { class: 'alert warn' }, '⚠ 元 PDF が前回処理時から変更されています'));
+          children.push(h('div', { class: 'alert warn' }, icon('triangle-alert'), '元 PDF が前回処理時から変更されています'));
         }
         const job = file?.job;
         if (!job) {
@@ -483,11 +558,71 @@ export const pdfSection: Section = {
       replaceChildren(jobPanel, ...children);
     }
 
+    /** "DRAFT（全ページ）" for each enabled / disabled placement, in stamps.json order. */
+    function stampSummary(state: AppState): { enabled: string[]; disabled: string[] } {
+      const ws = state.workspace;
+      const enabled: string[] = [];
+      const disabled: string[] = [];
+      for (const inst of ws?.stamps.instances ?? []) {
+        const name = ws?.stamps.definitions.find((d) => d.id === inst.stampId)?.name ?? inst.stampId;
+        (inst.enabled ? enabled : disabled).push(`${name}（${describePageSelector(inst.pages)}）`);
+      }
+      return { enabled, disabled };
+    }
+
+    /** 全ファイルを処理 also regenerates up-to-date files (off: only what needs work). */
+    let regenerateAll = false;
+
+    async function runBatch(): Promise<void> {
+      const paths = filesToProcess(ctrl.state.files, regenerateAll).map((f) => f.path);
+      if (paths.length === 0) return;
+      const skipped = ctrl.state.files.length - paths.length;
+      const { enabled, disabled } = stampSummary(ctrl.state);
+      const message =
+        `${paths.length} 件の PDF に次のスタンプを付けて生成します${skipped ? `（最新の ${skipped} 件はそのまま）` : ''}．\n\n` +
+        `有効:\n${enabled.map((n) => `  ・${n}`).join('\n')}` +
+        (disabled.length ? `\n\n無効（付きません）:\n${disabled.map((n) => `  ・${n}`).join('\n')}` : '') +
+        '\n\nよろしいですか？';
+      if (!confirm(message)) return;
+      const label = '全ファイルを処理';
+      await ctrl.run(label, async () => {
+        let done = 0;
+        let warned = 0;
+        const failed: string[] = [];
+        try {
+          for (const [i, path] of paths.entries()) {
+            ctrl.setProgress({ label, done: i, total: paths.length });
+            try {
+              const res = await generateStampedPdf(ctrl, path);
+              if (res) {
+                done += 1;
+                if (res.warnings.length) warned += 1;
+                // A few per-file toasts; the rest are in each file's job info.
+                if (warned <= 3) for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
+              }
+            } catch (e) {
+              failed.push(path);
+              console.error('batch generate failed', path, e);
+            }
+          }
+        } finally {
+          ctrl.setProgress(undefined);
+        }
+        ctrl.toast(
+          failed.length ? 'warn' : 'ok',
+          `${done} 件処理しました（警告 ${warned} 件${failed.length ? `／エラー ${failed.length} 件: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ' 他' : ''}` : ''}）`,
+          10000,
+        );
+      });
+    }
+
     function renderActions(state: AppState): void {
       const ws = state.workspace;
-      const hasEnabled = ws?.stamps.instances.some((i) => i.enabled) ?? false;
+      const { enabled, disabled } = stampSummary(state);
+      const hasEnabled = enabled.length > 0;
       const generateDisabled = !ws || !state.selectedFile || !hasEnabled || !!state.busy;
-      const batchDisabled = !ws || state.files.length === 0 || !hasEnabled || !!state.busy;
+      const pending = filesToProcess(state.files, regenerateAll).length;
+      const batchDisabled = !ws || pending === 0 || !hasEnabled || !!state.busy;
 
       const generateBtn = h(
         'button',
@@ -495,6 +630,7 @@ export const pdfSection: Section = {
           class: 'btn btn-primary',
           type: 'button',
           disabled: generateDisabled,
+          title: hasEnabled ? `付くスタンプ: ${enabled.join('，')}` : '有効なスタンプがありません',
           on: {
             click: () => {
               const path = state.selectedFile;
@@ -509,45 +645,111 @@ export const pdfSection: Section = {
         },
         'Generate PDF',
       );
-
-      const batchBtn = h(
-        'button',
-        {
-          class: 'btn',
-          type: 'button',
-          disabled: batchDisabled,
-          on: {
-            click: () => {
-              const paths = ctrl.state.files.map((f) => f.path);
-              void ctrl.run('全ファイルを処理', async () => {
-                let done = 0;
-                let warned = 0;
-                let failed = 0;
-                for (const path of paths) {
-                  try {
-                    const res = await generateStampedPdf(ctrl, path);
-                    if (res) {
-                      done += 1;
-                      if (res.warnings.length) warned += 1;
-                      for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
-                    }
-                  } catch (e) {
-                    failed += 1;
-                    console.error('batch generate failed', path, e);
-                  }
-                }
-                ctrl.toast(
-                  failed ? 'warn' : 'ok',
-                  `${done} 件処理しました（警告 ${warned} 件${failed ? `／エラー ${failed} 件` : ''}）`,
-                );
-              });
-            },
-          },
-        },
-        '全ファイルを処理',
+      const batchBtn = button(
+        regenerateAll ? `全ファイルを処理（${pending} 件）` : `更新が必要なファイルを処理（${pending} 件）`,
+        () => void runBatch(),
+        'btn',
+        'refresh-cw',
       );
+      batchBtn.disabled = batchDisabled;
+      batchBtn.title = regenerateAll
+        ? 'すべてのファイルを作り直します'
+        : '未処理・要更新・エラーのファイルだけを生成します（最新のものはそのまま）';
+      const allCheckbox = h('input', { type: 'checkbox', checked: regenerateAll });
+      allCheckbox.addEventListener('change', () => {
+        regenerateAll = allCheckbox.checked;
+        renderActions(ctrl.state);
+      });
+      const outputsBtn = button('出力フォルダ', () => void openOutputs(), 'btn', 'folder-open');
+      outputsBtn.disabled = !ws;
 
-      replaceChildren(actionsPanel, h('div', { class: 'row' }, generateBtn, batchBtn));
+      const p = state.progress;
+      const pct = p ? Math.floor((p.done / Math.max(1, p.total)) * 100) : 0;
+      replaceChildren(
+        actionsPanel,
+        ws
+          ? h(
+              'div',
+              { class: 'stamp-summary' },
+              hasEnabled
+                ? h('div', null, h('strong', null, `付くスタンプ（${enabled.length}）: `), enabled.join('，'))
+                : h('div', { class: 'alert warn' }, '有効なスタンプがありません．上の Stamps でチェックを入れてください．'),
+              disabled.length ? h('div', { class: 'muted' }, `無効: ${disabled.join('，')}`) : '',
+            )
+          : '',
+        p
+          ? h(
+              'div',
+              { class: 'batch-progress' },
+              h('progress', { max: p.total, value: p.done }),
+              h('span', { class: 'mono' }, `${p.done}/${p.total}（${pct}%）`),
+            )
+          : '',
+        h('div', { class: 'row' }, generateBtn, batchBtn, outputsBtn),
+        ws ? h('label', { class: 'row muted settings-note', style: 'margin-top:6px' }, allCheckbox, '最新のファイルも作り直す') : '',
+      );
+    }
+
+    // ------------------------------------------------------ output folder
+
+    const outputsDialog = h('dialog', { class: 'outputs-dialog' });
+    root.append(outputsDialog);
+
+    /** Open a workspace PDF in a new browser tab (a blob URL; nothing leaves the browser). */
+    async function openInTab(path: string): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws) return;
+      const bytes = await ws.fs.readBytes(path);
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+
+    /**
+     * Browsers cannot reveal a local folder in Finder/Explorer, so list
+     * output/ here instead, each file openable in a new tab.
+     */
+    async function openOutputs(): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws) return;
+      const dir = ws.config.directories.output;
+      const entries = await ws.fs.list(dir, { extensions: ['.pdf'] }).catch(() => []);
+      const staleOutputs = new Map(
+        ctrl.state.files.filter((f) => f.job && f.status !== 'processed' && f.status !== 'warning').map((f) => [f.job!.output, STATUS_LABEL[f.status].text]),
+      );
+      replaceChildren(
+        outputsDialog,
+        h(
+          'div',
+          { class: 'row', style: 'justify-content:space-between' },
+          h('h2', null, `${dir}/（${entries.length} 件）`),
+          button('閉じる', () => outputsDialog.close(), 'btn btn-sm'),
+        ),
+        h(
+          'p',
+          { class: 'muted settings-note' },
+          `ブラウザからは Finder / エクスプローラでフォルダを開けないため，一覧から開きます．フォルダの場所: Workspace「${ws.config.name}」内の ${dir}/`,
+        ),
+        entries.length
+          ? h(
+              'ul',
+              { class: 'list outputs-list' },
+              [...entries]
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+                .map((e) =>
+                  h(
+                    'li',
+                    { on: { click: () => void openInTab(e.path) }, title: 'クリックで新しいタブに開く' },
+                    h('span', { class: 'name' }, e.name),
+                    staleOutputs.has(e.path) ? h('span', { class: 'badge warn', title: staleOutputs.get(e.path) }, '古い') : '',
+                    h('span', { class: 'muted' }, new Date(e.lastModified).toLocaleString()),
+                    h('span', { class: 'muted' }, formatBytes(e.size)),
+                  ),
+                ),
+            )
+          : h('p', { class: 'muted' }, 'まだ出力はありません．'),
+      );
+      if (!outputsDialog.open) outputsDialog.showModal();
     }
 
     function syncToolbar(state: AppState): void {

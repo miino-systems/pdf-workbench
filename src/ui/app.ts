@@ -4,11 +4,14 @@
  */
 import type { AppController, AppState } from '@/state/app';
 import type { TabId } from '@/state/prefs';
-import { button, h, replaceChildren } from './dom';
+import { button, h, iconButton, replaceChildren } from './dom';
+import { icon, type IconName } from './icons';
 
 export interface Section {
   id: TabId;
   title: string;
+  /** Fill the viewport height (the section scrolls its own columns instead of the page). */
+  fill?: boolean;
   /** Mount into `root`; return an update callback invoked on every state change. */
   mount(root: HTMLElement, ctrl: AppController): (state: AppState, prev: AppState) => void;
 }
@@ -19,11 +22,11 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const tabs = h('nav', { class: 'tabs', attrs: { role: 'tablist' } });
   const main = h('main', { class: 'app-main' });
   const toasts = h('div', { class: 'toasts' });
-  const busy = h('span', { class: 'muted' });
+  const busy = h('span', { class: 'muted busy-indicator' });
   const wsLabel = h('span', { class: 'muted' });
-  const undoBtn = button('↶', () => void ctrl.undo(), 'btn btn-sm');
-  const redoBtn = button('↷', () => void ctrl.redo(), 'btn btn-sm');
-  const reloadBtn = button('🔄 更新', () => void ctrl.reloadWorkspace(), 'btn btn-sm');
+  const undoBtn = iconButton('undo', '元に戻す', () => void ctrl.undo());
+  const redoBtn = iconButton('redo', 'やり直す', () => void ctrl.redo());
+  const reloadBtn = button('更新', () => void ctrl.reloadWorkspace(), 'btn btn-sm', 'refresh-cw');
 
   const header = h(
     'header',
@@ -34,7 +37,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     h('span', { class: 'spacer' }),
     busy,
     h('span', { class: 'row header-actions' }, undoBtn, redoBtn, reloadBtn),
-    h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, '🔒 ', PRIVACY_NOTICE),
+    h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, icon('lock'), PRIVACY_NOTICE),
   );
 
   const footer = h(
@@ -51,7 +54,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const panels = new Map<TabId, HTMLElement>();
 
   for (const section of sections) {
-    const panel = h('section', { class: 'section', attrs: { role: 'tabpanel' }, id: `section-${section.id}` });
+    const panel = h('section', { class: section.fill ? 'section section-fill' : 'section', attrs: { role: 'tabpanel' }, id: `section-${section.id}` });
     panel.hidden = true;
     main.appendChild(panel);
     panels.set(section.id, panel);
@@ -87,7 +90,8 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
         h(
           'div',
           { class: `toast ${t.kind}`, on: { click: () => ctrl.dismissToast(t.id) }, attrs: { role: 'status' } },
-          t.text,
+          icon(TOAST_ICON[t.kind]),
+          h('span', null, t.text),
         ),
       ),
     );
@@ -109,7 +113,13 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   function render(state: AppState, prev: AppState): void {
     applyTheme(state);
     showTab(state.prefs.lastTab);
-    busy.textContent = state.busy ? `⏳ ${state.busy}…` : '';
+    const p = state.progress;
+    const busyText = p
+      ? `${p.label} ${p.done}/${p.total}（${Math.floor((p.done / Math.max(1, p.total)) * 100)}%）`
+      : state.busy
+        ? `${state.busy}…`
+        : '';
+    replaceChildren(busy, busyText ? [icon('loader', { className: 'icon-spin' }), busyText] : []);
     wsLabel.textContent = state.workspace ? `Workspace: ${state.workspace.config.name}/` : '';
     renderActions(state);
     renderToasts(state);
@@ -119,7 +129,26 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   ctrl.store.subscribe(render);
   render(ctrl.state, ctrl.state);
   document.addEventListener('keydown', (ev) => handleShortcut(ev, ctrl));
+
+  // Pick up .pdf-workbench/*.json edited in another program (an editor, a
+  // script, git checkout) before the stale in-memory copy can be saved over
+  // it: when the window regains focus, and every few seconds while visible.
+  const checkExternal = (): void => {
+    if (document.visibilityState === 'visible' && !ctrl.state.busy) void ctrl.checkExternalChanges();
+  };
+  window.addEventListener('focus', checkExternal);
+  document.addEventListener('visibilitychange', checkExternal);
+  setInterval(checkExternal, EXTERNAL_CHECK_INTERVAL_MS);
 }
+
+const EXTERNAL_CHECK_INTERVAL_MS = 4000;
+
+const TOAST_ICON: Record<AppState['toasts'][number]['kind'], IconName> = {
+  ok: 'circle-check',
+  info: 'info',
+  warn: 'triangle-alert',
+  err: 'circle-x',
+};
 
 function isMac(): boolean {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);

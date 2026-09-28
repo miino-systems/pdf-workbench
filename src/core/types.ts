@@ -44,6 +44,8 @@ export interface WorkspaceDirectories {
   assets: string;
   /** Workspace fonts (.ttf/.otf). */
   fonts: string;
+  /** Annotated review copies of PDFs that failed the batch preflight, plus its summary (default `preflight`). */
+  preflight?: string;
 }
 
 export const DEFAULT_DIRECTORIES: WorkspaceDirectories = {
@@ -200,7 +202,11 @@ export interface ResolvedFont {
 
 export interface StampLayerBase {
   id: string;
-  /** Offset of this layer relative to the stamp origin (pt). */
+  /**
+   * Offset of this layer relative to the stamp origin (pt, x right / y up).
+   * With a definition `layout`, an extra nudge on top of the automatic
+   * placement.
+   */
   dx?: number;
   dy?: number;
   /** 0..1 */
@@ -209,8 +215,20 @@ export interface StampLayerBase {
   rotate?: number;
 }
 
-export interface TextLayer extends StampLayerBase {
+/** Horizontal alignment of the lines of a multi-line text block. */
+export type TextAlign = 'left' | 'center' | 'right';
+
+/** Options shared by the text-drawing layers (`text`, `pageNumber`). */
+export interface TextBlockOptions {
+  /** Line alignment within the block (the block is as wide as its longest line). Default `left`. */
+  align?: TextAlign;
+  /** Distance between baselines as a multiple of `size`. Default 1.2. */
+  lineHeight?: number;
+}
+
+export interface TextLayer extends StampLayerBase, TextBlockOptions {
   type: 'text';
+  /** `\n` starts a new line. */
   text: string;
   font: FontRef;
   /** Font size in pt. */
@@ -232,7 +250,7 @@ export interface ImageLayer extends StampLayerBase {
  * Page-number layer. `template` supports `{page}`, `{pages}`, `{file}`.
  * Examples: `{page}`, `{page} / {pages}`, `Page {page} of {pages}`.
  */
-export interface PageNumberLayer extends StampLayerBase {
+export interface PageNumberLayer extends StampLayerBase, TextBlockOptions {
   type: 'pageNumber';
   template: string;
   font: FontRef;
@@ -259,11 +277,28 @@ export type StampLayer = TextLayer | ImageLayer | PageNumberLayer | FutureLayer;
 export type ImplementedLayerType = 'text' | 'image' | 'pageNumber';
 export const IMPLEMENTED_LAYER_TYPES: readonly ImplementedLayerType[] = ['text', 'image', 'pageNumber'];
 
+/**
+ * Automatic placement of a stamp's layers. Without it every layer sits at
+ * the stamp origin shifted by its own dx/dy (layers overlap). With it the
+ * layers are laid out one after another, in `layers` order:
+ *  - `row`: left to right (e.g. a logo left of a text block),
+ *  - `column`: top to bottom,
+ * `gap` pt apart, aligned across the other axis by `align` (`start` = top
+ * for a row / left for a column, `end` = bottom / right). Each layer's
+ * dx/dy is then an extra nudge.
+ */
+export interface StampLayout {
+  direction: 'row' | 'column';
+  gap?: number;
+  align?: 'start' | 'center' | 'end';
+}
+
 export interface StampDefinition {
   id: string;
   name: string;
   description?: string;
   layers: StampLayer[];
+  layout?: StampLayout;
   defaultPosition?: StampPosition;
   defaultPages?: PageSelector;
 }
@@ -325,6 +360,38 @@ export interface SequenceEntry {
   output?: string;
 }
 
+/**
+ * Where the current `order` / `entries` came from, kept for audit purposes
+ * only (never read by the numbering logic itself).
+ *  - `import`: read from a dropped CSV/JSON file (`source` / `format`).
+ *  - `manual`: built up by hand in the Sequence tab (moves, pins, ...) with
+ *    no file import behind it.
+ *  - `name`: explicitly reset to natural name order ("ファイル名順に戻す").
+ *
+ * A manual edit that follows an import (e.g. nudging one row after dropping
+ * a CSV) does not overwrite `kind`/`source`/`format` — it only stamps
+ * `editedAt`, so the tab can show both "came from rename_map.csv" and
+ * "edited afterwards".
+ */
+export interface SequenceOrigin {
+  kind: 'import' | 'manual' | 'name';
+  /** Name of the dropped file, e.g. `rename_map.csv`. */
+  source?: string;
+  format?: 'csv' | 'json';
+  /** ISO-8601 with offset, set when `kind` is `import`. */
+  importedAt?: string;
+  /** ISO-8601 with offset of the most recent manual edit made after import. */
+  editedAt?: string;
+  /**
+   * Name of the column the source rows were ordered by, when the header
+   * suggests one (e.g. `Session Code`, `time`); `'file order'` when the
+   * file has no such column and its row order was simply taken as-is.
+   */
+  sortKey?: string;
+  /** Number of entries the import produced (excluding a skipped header row). */
+  rows?: number;
+}
+
 /** `.pdf-workbench/sequence.json` */
 export interface SequenceConfig {
   version: number;
@@ -333,6 +400,8 @@ export interface SequenceConfig {
   firstPage: number;
   startOn: SequenceStartOn;
   entries: SequenceEntry[];
+  /** Where this order came from (import / manual edit / name order). Advisory only. */
+  origin?: SequenceOrigin;
 }
 
 // ---------------------------------------------------------------------------
@@ -349,11 +418,37 @@ export interface PreflightMargins {
   unit: 'mm' | 'pt' | 'in';
 }
 
+/**
+ * Per-page override of some margin sides, e.g. a wider top margin on the
+ * title page only. `pages` selects which pages it applies to (same
+ * `PageSelector` used for stamp placement); `margins` only needs to name the
+ * sides being overridden — `unit` and any side left out fall back to
+ * `PreflightConfig.margins`. When several overrides match the same page, the
+ * later entry in `marginOverrides` wins per side.
+ *
+ * Example (first page only, top margin 35mm — the rest inherited):
+ * ```json
+ * { "pages": { "kind": "first" }, "margins": { "top": 35 } }
+ * ```
+ */
+export interface PreflightMarginOverride {
+  pages: PageSelector;
+  margins: Partial<Pick<PreflightMargins, 'top' | 'bottom' | 'left' | 'right'>>;
+}
+
 /** `.pdf-workbench/preflight.json` */
 export interface PreflightConfig {
   version: number;
   id: string;
   name?: string;
+  /**
+   * Id of the built-in preset (`preflight/presets.ts` `PREFLIGHT_PRESETS`)
+   * this config was last applied from, e.g. `'ieee-conference'`. Purely
+   * informational (shown in the UI as "適用元"); editing the config after
+   * applying a preset does not clear it, so treat it as a starting-point
+   * label rather than a guarantee the values still match that preset.
+   */
+  preset?: string;
   page?: {
     /** e.g. `A4`, `Letter`; see core/units.ts PAPER_SIZES_PT. */
     size?: string;
@@ -362,6 +457,8 @@ export interface PreflightConfig {
     tolerance?: number;
   };
   margins?: PreflightMargins;
+  /** Per-page margin overrides (e.g. a wider first-page top margin). See `PreflightMarginOverride`. */
+  marginOverrides?: PreflightMarginOverride[];
   pages?: { min?: number; max?: number };
   checks?: {
     /** Object-based (getTextContent) margin check. */
@@ -385,11 +482,27 @@ export type PreflightWarningCode =
   | 'STAMP_COLLISION'
   | string;
 
+/**
+ * Where a preflight problem is on the page, for annotating a review copy.
+ * `rect` is in the page's visible frame (as displayed, `/Rotate` applied),
+ * pt, origin bottom-left.
+ */
+export interface PreflightFinding {
+  code: PreflightWarningCode;
+  /** Which check found it. */
+  source: 'text' | 'raster' | 'page' | 'stamp';
+  rect?: Rect;
+  /** The offending text run (text check) or stamp name (stamp check). */
+  text?: string;
+}
+
 export interface PreflightPageResult {
   page: number; // 1-based
   warnings: PreflightWarningCode[];
   errors?: PreflightWarningCode[];
   details?: Record<string, unknown>;
+  /** Located problems on this page (capped per page), used to annotate a review copy. */
+  findings?: PreflightFinding[];
 }
 
 /** Saved into `.pdf-workbench/reports/<file>.<timestamp>.json` */
@@ -421,6 +534,11 @@ export interface JobRecord {
   outputHash?: string;
   /** StampInstance ids that were applied. */
   stampInstances: string[];
+  /**
+   * `stampsFingerprint` of stamps.json at generation time; when the current
+   * stamps no longer match, the output is shown as stale.
+   */
+  stampsHash?: string;
   /** Fonts actually embedded (for reproducibility warnings). */
   fonts?: { ref: FontRef; sha256?: string }[];
   /**

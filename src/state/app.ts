@@ -44,8 +44,10 @@ import {
 } from '@/workspace';
 import { EVENT_TYPES, HistoryJournal, SnapshotStore } from '@/history';
 import { countPdfPages } from '@/pdf/reader';
+import { effectivePosition, stampsFingerprint } from '@/stamps';
 import { resolveSequence, sequenceItemFor, type ResolvedSequence, type SequenceFileInfo } from '@/sequence';
 import type { HistoryEvent } from '@/core/types';
+import { normalizeSequenceConfig } from '@/sequence/normalize';
 import { Store } from './store';
 import { loadPrefs, savePrefs, type UiPrefs } from './prefs';
 import { UndoStack, changedKinds, stampEditLabel, type ConfigSnapshot } from './undo';
@@ -56,7 +58,26 @@ export type FileStatus =
   | 'warning'
   | 'error'
   | 'source-changed'
-  | 'numbering-changed';
+  | 'numbering-changed'
+  | 'stamps-changed'
+  | 'output-changed';
+
+/**
+ * Generated before, but something it depends on has changed since (source
+ * PDF, page numbering, stamps, output name): the output is stale and should
+ * be regenerated.
+ */
+export const NEEDS_UPDATE_STATUSES: ReadonlySet<FileStatus> = new Set<FileStatus>([
+  'source-changed',
+  'numbering-changed',
+  'stamps-changed',
+  'output-changed',
+]);
+
+/** Generated and still up to date (possibly with warnings). */
+export function isUpToDate(status: FileStatus): boolean {
+  return status === 'processed' || status === 'warning';
+}
 
 export interface PdfFileItem extends WorkspaceFileEntry {
   status: FileStatus;
@@ -88,6 +109,8 @@ export interface AppState {
   currentPage: number;
   pageCount: number;
   busy?: string;
+  /** Progress of a long batch (shown as n/N and %), while it runs. */
+  progress?: { label: string; done: number; total: number };
   toasts: Toast[];
   /** Recently loaded events (for the History tab). */
   events: HistoryEvent[];
@@ -102,6 +125,33 @@ export interface AppState {
 }
 
 type LoadMode = 'opened' | 'initialized' | 'reloaded';
+
+/** The `.pdf-workbench/*.json` files the app reads and writes, by `WorkspaceState` key. */
+type ConfigFile = 'config' | 'stamps' | 'sequence' | 'preflight' | 'jobs';
+
+const CONFIG_FILES: Record<ConfigFile, string> = {
+  config: WORKBENCH_FILES.workspace,
+  stamps: WORKBENCH_FILES.stamps,
+  sequence: WORKBENCH_FILES.sequence,
+  preflight: WORKBENCH_FILES.preflight,
+  jobs: WORKBENCH_FILES.jobs,
+};
+
+function fileLabel(kind: ConfigFile): string {
+  return CONFIG_FILES[kind].split('/').pop() ?? kind;
+}
+
+/** Context handed to an `updateStamps` mutation. */
+export interface StampsMutationContext {
+  /**
+   * stamps.json had been changed outside the app since it was last read, and
+   * `cfg` is the on-disk version. `previous` is the in-memory version the UI
+   * was showing, so an edit built from it can tell whether the part it
+   * replaces was changed externally (and return `false` to cancel).
+   */
+  external: boolean;
+  previous: StampsConfig;
+}
 
 let toastSeq = 0;
 
@@ -125,6 +175,16 @@ export class AppController {
   private pageCountCache = new Map<string, { size: number; lastModified: number; pageCount?: number }>();
   /** Undo/redo of config edits in the current workspace (cleared whenever it is (re)loaded or closed). */
   private undoStack = new UndoStack();
+  /**
+   * Exact text of each config file as this session last read or wrote it.
+   * A different text on disk means someone edited the file outside the app:
+   * it is read back instead of being overwritten with stale in-memory data.
+   */
+  private diskText = new Map<ConfigFile, string>();
+  /** Unparseable external versions already reported (so the periodic check doesn't repeat the toast). */
+  private reportedBadText = new Map<ConfigFile, string>();
+  /** Serialises config reads/writes so the external-change check never sees a half-finished own save. */
+  private io: Promise<unknown> = Promise.resolve();
 
   constructor() {
     this.store = new Store<AppState>({
@@ -162,6 +222,11 @@ export class AppController {
 
   dismissToast(id: number): void {
     this.store.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  }
+
+  /** Report batch progress (undefined to clear). */
+  setProgress(progress: AppState['progress']): void {
+    this.store.set({ progress });
   }
 
   /** Run an async task with a busy indicator and error toast. */
@@ -245,7 +310,7 @@ export class AppController {
   }
 
   /**
-   * Re-read the open workspace from disk (Cmd+R / 🔄): picks up files and
+   * Re-read the open workspace from disk (Cmd+R / the header's 更新 button): picks up files and
    * `.pdf-workbench/*.json` edited outside the app, keeping the selected PDF
    * and page. With no workspace open, reopens the most recently used one.
    */
@@ -257,7 +322,7 @@ export class AppController {
       if (selectedFile && this.state.files.some((f) => f.path === selectedFile)) {
         await this.selectFile(selectedFile, currentPage);
       }
-      this.toast('ok', `🔄 「${workspace.config.name}」を再読み込みしました`);
+      this.toast('ok', `「${workspace.config.name}」を再読み込みしました`);
       return;
     }
     await this.refreshRecent();
@@ -267,7 +332,7 @@ export class AppController {
       return;
     }
     await this.openRecent(latest);
-    if (this.state.workspaceHandle === latest.handle) this.toast('ok', `🔄 「${latest.name}」を開きました`);
+    if (this.state.workspaceHandle === latest.handle) this.toast('ok', `「${latest.name}」を開きました`);
   }
 
   /**
@@ -288,6 +353,7 @@ export class AppController {
     this.pageCountCache.clear();
     this.undoStack.clear();
     const workspace = await loadWorkspace(fs);
+    await this.rememberDiskText(workspace);
     this.journal = new HistoryJournal(fs, { hashChain: workspace.config.history.hashChain });
     this.snapshots = new SnapshotStore(fs);
     this.store.set({
@@ -319,6 +385,7 @@ export class AppController {
     this.wsEpoch += 1;
     this.pageCountCache.clear();
     this.undoStack.clear();
+    this.diskText.clear();
     this.journal = undefined;
     this.snapshots = undefined;
     this.store.set({
@@ -367,10 +434,22 @@ export class AppController {
     await this.refreshSequence();
   }
 
-  /** `computeStatus` against the currently resolved sequence (if any). */
-  private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string): FileStatus {
-    const item = sequenceItemFor(this.state.sequence, path);
-    return computeStatus(job, hash, item ? { pageStart: item.pageStart } : undefined);
+  /** `computeStatus` against the currently resolved sequence (if any) and the current stamps. */
+  private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string, sequence = this.state.sequence): FileStatus {
+    const item = sequenceItemFor(sequence, path);
+    const ws = this.state.workspace;
+    return computeStatus(
+      job,
+      hash,
+      item ? { pageStart: item.pageStart } : undefined,
+      ws ? stampsFingerprint(ws.stamps) : undefined,
+      ws ? this.outputPathFor(path) : undefined,
+    );
+  }
+
+  /** Recompute every file's status (after stamps.json or jobs.json changed). */
+  private refreshStatuses(): void {
+    this.store.set((s) => ({ files: s.files.map((f) => ({ ...f, status: this.statusFor(f.job, f.sha256, f.path) })) }));
   }
 
   // ------------------------------------------------------------- sequence
@@ -406,27 +485,40 @@ export class AppController {
     const resolved = resolveSequence(ws.sequence, infos);
     this.store.set((s) => ({
       sequence: resolved,
-      files: s.files.map((f) => {
-        const item = sequenceItemFor(resolved, f.path);
-        return { ...f, status: computeStatus(f.job, f.sha256, item ? { pageStart: item.pageStart } : undefined) };
-      }),
+      files: s.files.map((f) => ({ ...f, status: this.statusFor(f.job, f.sha256, f.path, resolved) })),
     }));
     return resolved;
   }
 
-  /** Persist a new `sequence.json`, log the change and re-resolve the numbering. */
-  async updateSequence(next: SequenceConfig, event?: Record<string, unknown>): Promise<void> {
+  /**
+   * Persist a new `sequence.json`, log the change and re-resolve the
+   * numbering. Pass a function to derive the new config from the current
+   * one: if the file was edited outside the app, it is then applied to the
+   * on-disk version. A plain config replaces the file only when it was not
+   * edited externally (or for an explicit import), otherwise the external
+   * version is loaded and the change is dropped with a warning.
+   */
+  async updateSequence(
+    next: SequenceConfig | ((current: SequenceConfig) => SequenceConfig),
+    event?: Record<string, unknown>,
+  ): Promise<void> {
     const ws = this.requireWorkspace();
-    const before = snapshotOf(ws);
-    ws.sequence = next;
-    await saveSequenceConfig(ws.fs, next);
-    this.recordUndo('通し番号の設定を変更', before, ws);
-    this.store.set({ workspace: { ...ws } });
+    const saved = await this.guardedWrite(ws, 'sequence', (external) => {
+      if (external && typeof next !== 'function' && event?.action !== 'import') return false;
+      const before = snapshotOf(ws);
+      ws.sequence = typeof next === 'function' ? next(ws.sequence) : next;
+      return () => this.recordUndo('通し番号の設定を変更', before, ws);
+    });
+    if (!saved) {
+      await this.refreshSequence();
+      return;
+    }
+    const cfg = ws.sequence;
     await this.log(EVENT_TYPES.sequenceUpdated, {
-      order: next.order,
-      firstPage: next.firstPage,
-      startOn: next.startOn,
-      entries: next.entries.length,
+      order: cfg.order,
+      firstPage: cfg.firstPage,
+      startOn: cfg.startOn,
+      entries: cfg.entries.length,
       ...event,
     });
     await this.refreshSequence();
@@ -479,7 +571,7 @@ export class AppController {
       }));
       const item = this.state.files.find((f) => f.path === path);
       if (item?.status === 'source-changed') {
-        this.toast('warn', '⚠ 元 PDF が前回処理時から変更されています');
+        this.toast('warn', '元 PDF が前回処理時から変更されています');
       }
     });
   }
@@ -500,20 +592,26 @@ export class AppController {
    * actions: they are logged and can be undone; bookkeeping updates without
    * one (e.g. font hashes recorded by `generate.ts`) are neither.
    */
-  async updateStamps(mutate: (cfg: StampsConfig) => void, event?: { type: string; [k: string]: unknown }): Promise<void> {
+  async updateStamps(
+    mutate: (cfg: StampsConfig, ctx: StampsMutationContext) => void | false,
+    event?: { type: string; [k: string]: unknown },
+  ): Promise<boolean> {
     const ws = this.requireWorkspace();
-    const before = snapshotOf(ws);
-    const next = structuredClone(ws.stamps);
-    mutate(next);
-    ws.stamps = next;
-    await saveStampsConfig(ws.fs, next);
-    if (event) {
-      const target = typeof event.instance === 'string' ? event.instance : typeof event.stamp === 'string' ? event.stamp : '';
-      const mergeable = event.type === EVENT_TYPES.stampMoved || event.type === EVENT_TYPES.stampUpdated;
-      this.recordUndo(stampEditLabel(event.type, stampNameFor(before.stamps, next, event)), before, ws, mergeable ? `${event.type}:${target}` : undefined);
-    }
-    this.store.set({ workspace: { ...ws } });
-    if (event) await this.log(event.type, event);
+    const previous = ws.stamps;
+    const saved = await this.guardedWrite(ws, 'stamps', (external) => {
+      const before = snapshotOf(ws);
+      const next = structuredClone(ws.stamps);
+      if (mutate(next, { external, previous }) === false) return false;
+      ws.stamps = next;
+      return () => {
+        if (!event) return;
+        const target = typeof event.instance === 'string' ? event.instance : typeof event.stamp === 'string' ? event.stamp : '';
+        const mergeable = event.type === EVENT_TYPES.stampMoved || event.type === EVENT_TYPES.stampUpdated;
+        this.recordUndo(stampEditLabel(event.type, stampNameFor(before.stamps, next, event)), before, ws, mergeable ? `${event.type}:${target}` : undefined);
+      };
+    });
+    if (saved && event) await this.log(event.type, event);
+    return saved;
   }
 
   async setInstanceEnabled(instanceId: string, enabled: boolean): Promise<void> {
@@ -530,23 +628,61 @@ export class AppController {
     );
   }
 
-  async setInstancePosition(instanceId: string, position: StampPosition): Promise<void> {
-    let stampId = '';
+  /** Enable or disable every placement of a stamp (the checkbox in the Stamps list). */
+  async setStampEnabled(stampId: string, enabled: boolean): Promise<void> {
     await this.updateStamps(
       (cfg) => {
-        const inst = cfg.instances.find((i) => i.id === instanceId);
-        if (inst) {
-          inst.position = position;
-          stampId = inst.stampId;
-        }
+        for (const inst of cfg.instances) if (inst.stampId === stampId) inst.enabled = enabled;
+      },
+      { type: enabled ? EVENT_TYPES.stampEnabled : EVENT_TYPES.stampDisabled, stamp: stampId },
+    );
+  }
+
+  /**
+   * Give a placement its own position (overriding the definition's
+   * `defaultPosition`). The event records where it was before (`from`) so
+   * the history shows the whole move.
+   */
+  async setInstancePosition(instanceId: string, position: StampPosition): Promise<void> {
+    const ws = this.requireWorkspace();
+    const inst = ws.stamps.instances.find((i) => i.id === instanceId);
+    const def = inst && ws.stamps.definitions.find((d) => d.id === inst.stampId);
+    const from = inst && def ? effectivePosition(def, inst) : undefined;
+    await this.updateStamps(
+      (cfg) => {
+        const target = cfg.instances.find((i) => i.id === instanceId);
+        if (!target) return false;
+        target.position = position;
       },
       {
         type: EVENT_TYPES.stampMoved,
-        stamp: stampId,
+        stamp: inst?.stampId ?? '',
         instance: instanceId,
         anchor: position.anchor,
-        x: Math.round(position.offsetX * 100) / 100,
-        y: Math.round(position.offsetY * 100) / 100,
+        x: round2(position.offsetX),
+        y: round2(position.offsetY),
+        ...(from ? { from: { anchor: from.anchor, x: round2(from.offsetX), y: round2(from.offsetY), own: !!inst?.position } } : {}),
+      },
+    );
+  }
+
+  /** Drop a placement's own position so it follows the definition's `defaultPosition` again. */
+  async resetInstancePosition(instanceId: string): Promise<void> {
+    const inst = this.requireWorkspace().stamps.instances.find((i) => i.id === instanceId);
+    if (!inst?.position) return;
+    const from = inst.position;
+    await this.updateStamps(
+      (cfg) => {
+        const target = cfg.instances.find((i) => i.id === instanceId);
+        if (!target) return false;
+        target.position = undefined;
+      },
+      {
+        type: EVENT_TYPES.stampMoved,
+        stamp: inst.stampId,
+        instance: instanceId,
+        reset: true,
+        from: { anchor: from.anchor, x: round2(from.offsetX), y: round2(from.offsetY), own: true },
       },
     );
   }
@@ -572,11 +708,21 @@ export class AppController {
     );
   }
 
+  /**
+   * Replace a definition with an edited copy. When stamps.json was edited
+   * externally and this very definition changed there, the edit (built from
+   * the stale in-memory copy) is dropped rather than undoing those changes.
+   */
   async updateDefinition(def: StampDefinition): Promise<void> {
     await this.updateStamps(
-      (cfg) => {
+      (cfg, { external, previous }) => {
         const i = cfg.definitions.findIndex((d) => d.id === def.id);
-        if (i >= 0) cfg.definitions[i] = def;
+        if (i < 0) return false;
+        if (external) {
+          const shown = previous.definitions.find((d) => d.id === def.id);
+          if (JSON.stringify(shown) !== JSON.stringify(cfg.definitions[i])) return false;
+        }
+        cfg.definitions[i] = def;
       },
       { type: EVENT_TYPES.stampUpdated, stamp: def.id },
     );
@@ -612,32 +758,176 @@ export class AppController {
 
   // ------------------------------------------------------------- configs
 
+  /** Save the Settings form. Dropped (with a warning) when workspace.json was edited externally meanwhile. */
   async updateWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
     const ws = this.requireWorkspace();
-    const before = snapshotOf(ws);
-    ws.config = config;
-    await saveWorkspaceConfig(ws.fs, config);
-    this.journal = new HistoryJournal(ws.fs, { hashChain: config.history.hashChain });
-    this.recordUndo('Workspace 設定を変更', before, ws);
-    this.store.set({ workspace: { ...ws } });
-    await this.log('workspace.updated', {});
+    const saved = await this.guardedWrite(ws, 'config', (external) => {
+      if (external) return false;
+      const before = snapshotOf(ws);
+      ws.config = config;
+      return () => this.recordUndo('Workspace 設定を変更', before, ws);
+    });
+    if (saved) await this.log('workspace.updated', {});
   }
 
+  /** Save the Preflight form. Dropped (with a warning) when preflight.json was edited externally meanwhile. */
   async updatePreflightConfig(config: PreflightConfig): Promise<void> {
     const ws = this.requireWorkspace();
-    const before = snapshotOf(ws);
-    ws.preflight = config;
-    await savePreflightConfig(ws.fs, config);
-    this.recordUndo('Preflight ルールを変更', before, ws);
-    this.store.set({ workspace: { ...ws } });
-    await this.log('preflight.updated', { id: config.id });
+    const saved = await this.guardedWrite(ws, 'preflight', (external) => {
+      if (external) return false;
+      const before = snapshotOf(ws);
+      ws.preflight = config;
+      return () => this.recordUndo('Preflight ルールを変更', before, ws);
+    });
+    if (saved) await this.log('preflight.updated', { id: config.id });
   }
 
   async recordJob(job: JobRecord): Promise<void> {
     const ws = this.requireWorkspace();
-    ws.jobs = { ...ws.jobs, jobs: [...ws.jobs.jobs.filter((j) => j.source !== job.source), job] };
-    await saveJobsConfig(ws.fs, ws.jobs);
+    await this.guardedWrite(ws, 'jobs', () => {
+      ws.jobs = { ...ws.jobs, jobs: [...ws.jobs.jobs.filter((j) => j.source !== job.source), job] };
+    });
+  }
+
+  // ------------------------------------------------------ external edits
+
+  private exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const next = this.io.then(fn, fn);
+    this.io = next.catch(() => undefined);
+    return next;
+  }
+
+  private async rememberDiskText(ws: WorkspaceState): Promise<void> {
+    this.diskText.clear();
+    this.reportedBadText.clear();
+    for (const kind of Object.keys(CONFIG_FILES) as ConfigFile[]) {
+      try {
+        this.diskText.set(kind, await ws.fs.readText(CONFIG_FILES[kind]));
+      } catch {
+        /* missing: nothing external to protect yet */
+      }
+    }
+  }
+
+  private async writeConfig(ws: WorkspaceState, kind: ConfigFile): Promise<void> {
+    let text: string;
+    if (kind === 'config') {
+      text = await saveWorkspaceConfig(ws.fs, ws.config);
+      this.journal = new HistoryJournal(ws.fs, { hashChain: ws.config.history.hashChain });
+    } else if (kind === 'stamps') text = await saveStampsConfig(ws.fs, ws.stamps);
+    else if (kind === 'sequence') text = await saveSequenceConfig(ws.fs, ws.sequence);
+    else if (kind === 'preflight') text = await savePreflightConfig(ws.fs, ws.preflight);
+    else text = await saveJobsConfig(ws.fs, ws.jobs);
+    this.diskText.set(kind, text);
+    if (kind === 'stamps') this.refreshStatuses();
+  }
+
+  /**
+   * If `kind` changed on disk since this session last read or wrote it,
+   * load the on-disk version into `ws` and return true. Undo history is
+   * dropped then: its snapshots predate the external edit and restoring one
+   * would silently revert it. Throws when the external version isn't valid
+   * JSON (nothing is written until it is fixed).
+   */
+  private async adoptExternal(ws: WorkspaceState, kind: ConfigFile): Promise<boolean> {
+    const known = this.diskText.get(kind);
+    let text: string;
+    try {
+      text = await ws.fs.readText(CONFIG_FILES[kind]);
+    } catch {
+      return false;
+    }
+    if (known === undefined || text === known) return false;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (e) {
+      throw new Error(
+        `${fileLabel(kind)} が外部で変更されましたが JSON として読めません（${e instanceof Error ? e.message : String(e)}）．修正されるまで保存しません`,
+      );
+    }
+    if (kind === 'sequence') ws.sequence = normalizeSequenceConfig(parsed).config;
+    else if (kind === 'config') {
+      ws.config = parsed as WorkspaceConfig;
+      this.journal = new HistoryJournal(ws.fs, { hashChain: ws.config.history.hashChain });
+    } else if (kind === 'stamps') ws.stamps = parsed as StampsConfig;
+    else if (kind === 'preflight') ws.preflight = parsed as PreflightConfig;
+    else ws.jobs = parsed as JobsConfig;
+    this.diskText.set(kind, text);
+    this.reportedBadText.delete(kind);
+    if (kind === 'stamps') this.refreshStatuses();
+    this.undoStack.clear();
+    this.syncUndoState();
+    return true;
+  }
+
+  /**
+   * Read-modify-write of one config file that never overwrites an external
+   * edit with stale data: the on-disk version is adopted first (when it
+   * changed), then `apply` edits `ws` — returning false to cancel, or a
+   * callback run after the write (e.g. to record undo). Returns whether the
+   * file was written; failures are reported as toasts.
+   */
+  private async guardedWrite(
+    ws: WorkspaceState,
+    kind: ConfigFile,
+    apply: (external: boolean) => false | void | (() => void),
+  ): Promise<boolean> {
+    const file = fileLabel(kind);
+    try {
+      return await this.exclusive(async () => {
+        const external = await this.adoptExternal(ws, kind);
+        const after = apply(external);
+        if (after === false) {
+          this.store.set({ workspace: { ...ws } });
+          if (external) {
+            this.toast('warn', `${file} が Workbench の外で変更されていたため，この変更は保存せず外部の内容を読み込みました．内容を確認してからもう一度操作してください`, 10000);
+          }
+          return false;
+        }
+        await this.writeConfig(ws, kind);
+        if (after) after();
+        this.store.set({ workspace: { ...ws } });
+        if (external) this.toast('warn', `${file} が Workbench の外で変更されていたため，読み直してから変更を適用しました`, 8000);
+        return true;
+      });
+    } catch (e) {
+      this.toast('err', `${file} を保存できませんでした: ${e instanceof Error ? e.message : String(e)}`, 10000);
+      return false;
+    }
+  }
+
+  /**
+   * Pick up config files edited outside the app (called on window focus and
+   * periodically). Returns the files that were reloaded.
+   */
+  async checkExternalChanges(): Promise<string[]> {
+    const ws = this.state.workspace;
+    if (!ws || this.diskText.size === 0) return [];
+    const epoch = this.wsEpoch;
+    const changed: ConfigFile[] = await this.exclusive(async () => {
+      const kinds: ConfigFile[] = [];
+      for (const kind of Object.keys(CONFIG_FILES) as ConfigFile[]) {
+        if (epoch !== this.wsEpoch) return [];
+        try {
+          if (await this.adoptExternal(ws, kind)) kinds.push(kind);
+        } catch (e) {
+          const text = await ws.fs.readText(CONFIG_FILES[kind]).catch(() => '');
+          if (this.reportedBadText.get(kind) !== text) {
+            this.reportedBadText.set(kind, text);
+            this.toast('warn', e instanceof Error ? e.message : String(e), 10000);
+          }
+        }
+      }
+      return kinds;
+    });
+    if (changed.length === 0 || epoch !== this.wsEpoch) return [];
     this.store.set({ workspace: { ...ws } });
+    const names = changed.map(fileLabel);
+    this.toast('info', `Workbench の外で変更された ${names.join('，')} を読み込みました`);
+    await this.log(EVENT_TYPES.externalChange, { files: names });
+    if (changed.includes('sequence') || changed.includes('jobs')) await this.refreshFiles();
+    return names;
   }
 
   /** Output path for a source, honouring a per-file `output` name from `sequence.json`. */
@@ -677,35 +967,40 @@ export class AppController {
       return;
     }
     const target = dir === 'undo' ? entry.before : entry.after;
-    const done = await this.run(dir === 'undo' ? '元に戻す' : 'やり直す', async () => {
-      const kinds = changedKinds(snapshotOf(ws), target);
-      const restored = structuredClone(target);
-      for (const kind of kinds) {
-        if (kind === 'config') {
-          ws.config = restored.config;
-          await saveWorkspaceConfig(ws.fs, ws.config);
-          this.journal = new HistoryJournal(ws.fs, { hashChain: ws.config.history.hashChain });
-        } else if (kind === 'stamps') {
-          ws.stamps = restored.stamps;
-          await saveStampsConfig(ws.fs, ws.stamps);
-        } else if (kind === 'sequence') {
-          ws.sequence = restored.sequence;
-          await saveSequenceConfig(ws.fs, ws.sequence);
-        } else {
-          ws.preflight = restored.preflight;
-          await savePreflightConfig(ws.fs, ws.preflight);
+    const result = await this.run(dir === 'undo' ? '元に戻す' : 'やり直す', () =>
+      this.exclusive(async () => {
+        const kinds = changedKinds(snapshotOf(ws), target);
+        // Restoring a snapshot taken before an external edit would revert it:
+        // load the external version instead and drop the undo history.
+        const external: ConfigFile[] = [];
+        for (const kind of kinds) if (await this.adoptExternal(ws, kind)) external.push(kind);
+        if (external.length) {
+          this.store.set({ workspace: { ...ws } });
+          return { external: external.map(fileLabel), kinds };
         }
-      }
-      if (dir === 'undo') this.undoStack.undo();
-      else this.undoStack.redo();
-      this.store.set({ workspace: { ...ws } });
-      this.syncUndoState();
-      if (kinds.includes('sequence')) await this.refreshSequence();
-      return true;
-    });
-    if (!done) return;
+        const restored = structuredClone(target);
+        for (const kind of kinds) {
+          if (kind === 'config') ws.config = restored.config;
+          else if (kind === 'stamps') ws.stamps = restored.stamps;
+          else if (kind === 'sequence') ws.sequence = restored.sequence;
+          else ws.preflight = restored.preflight;
+          await this.writeConfig(ws, kind);
+        }
+        if (dir === 'undo') this.undoStack.undo();
+        else this.undoStack.redo();
+        this.store.set({ workspace: { ...ws } });
+        this.syncUndoState();
+        return { external: [], kinds };
+      }),
+    );
+    if (!result) return;
+    if (result.kinds.includes('sequence')) await this.refreshSequence();
+    if (result.external.length) {
+      this.toast('warn', `${result.external.join('，')} が Workbench の外で変更されていたため，元に戻さずに外部の内容を読み込みました`, 10000);
+      return;
+    }
     await this.log(dir === 'undo' ? EVENT_TYPES.undo : EVENT_TYPES.redo, { label: entry.label });
-    this.toast('info', dir === 'undo' ? `↶ 元に戻しました: ${entry.label}` : `↷ やり直しました: ${entry.label}`, 3000);
+    this.toast('info', dir === 'undo' ? `元に戻しました: ${entry.label}` : `やり直しました: ${entry.label}`, 3000);
   }
 
   // ------------------------------------------------------------- history
@@ -754,6 +1049,10 @@ export class AppController {
   }
 }
 
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 function snapshotOf(ws: WorkspaceState): ConfigSnapshot {
   return structuredClone({ config: ws.config, stamps: ws.stamps, sequence: ws.sequence, preflight: ws.preflight });
 }
@@ -787,20 +1086,29 @@ export function computeStatus(
   job: JobRecord | undefined,
   currentHash: string | undefined,
   numbering?: { pageStart?: number },
+  stampsHash?: string,
+  outputPath?: string,
 ): FileStatus {
   if (!job) return 'not-processed';
   if (currentHash && job.sourceHash !== currentHash) return 'source-changed';
   if (numbering && job.pageStart !== undefined && job.pageStart !== numbering.pageStart) return 'numbering-changed';
+  // Jobs from before stamps fingerprints were recorded are never flagged.
+  if (stampsHash && job.stampsHash && job.stampsHash !== stampsHash) return 'stamps-changed';
+  // e.g. a re-imported CSV renamed the output.
+  if (outputPath && job.output !== outputPath) return 'output-changed';
   if (job.status === 'error') return 'error';
   if (job.status === 'warning') return 'warning';
   return 'processed';
 }
 
+/** How each status is shown: `icon` names an icon in `ui/icons.ts`, `cls` its colour. */
 export const STATUS_LABEL: Record<FileStatus, { icon: string; text: string; cls: string }> = {
-  'not-processed': { icon: '○', text: 'Not processed', cls: 'muted' },
-  processed: { icon: '✓', text: 'Processed', cls: 'ok' },
-  warning: { icon: '⚠', text: 'Warning', cls: 'warn' },
-  error: { icon: '✗', text: 'Error', cls: 'err' },
-  'source-changed': { icon: '⚠', text: 'Source changed', cls: 'warn' },
-  'numbering-changed': { icon: '⚠', text: 'Page numbers changed', cls: 'warn' },
+  'not-processed': { icon: 'circle', text: '未処理', cls: 'muted' },
+  processed: { icon: 'circle-check', text: '処理済み（最新）', cls: 'ok' },
+  warning: { icon: 'triangle-alert', text: '処理済み（警告あり）', cls: 'warn' },
+  error: { icon: 'circle-x', text: 'エラー', cls: 'err' },
+  'source-changed': { icon: 'refresh-cw', text: '要更新: 元 PDF が変更されました', cls: 'update' },
+  'numbering-changed': { icon: 'refresh-cw', text: '要更新: 通しページ番号が変わりました', cls: 'update' },
+  'stamps-changed': { icon: 'refresh-cw', text: '要更新: 生成後にスタンプ設定が変更されました', cls: 'update' },
+  'output-changed': { icon: 'refresh-cw', text: '要更新: 出力ファイル名が変わりました（CSV の取り込みなど）', cls: 'update' },
 };

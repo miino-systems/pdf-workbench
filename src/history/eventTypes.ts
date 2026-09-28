@@ -10,11 +10,13 @@ export const EVENT_TYPES = {
   stampRemoved: 'stamp.removed',
   stampUpdated: 'stamp.updated',
   preflightRun: 'preflight.run',
+  preflightBatch: 'preflight.batch',
   pdfGenerated: 'pdf.generated',
   snapshotSaved: 'snapshot.saved',
   fontSelected: 'font.selected',
   sequenceUpdated: 'sequence.updated',
   sequenceExported: 'sequence.exported',
+  externalChange: 'workspace.external-change',
   undo: 'history.undo',
   redo: 'history.redo',
 } as const;

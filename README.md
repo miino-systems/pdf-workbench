@@ -108,7 +108,8 @@ git push
 1. Chrome / Edge で開き、**Workspace** タブで「ディレクトリを選択」
 2. `.pdf-workbench/` が無ければ「初期化」
 3. `papers/` に PDF を置き、**PDF** タブでファイルを選択して preview
-4. **Stamps** タブでスタンプ定義（テンプレートから追加可）と適用ページ・位置を設定
+4. **Stamps** タブでスタンプを追加（テンプレートから追加可）し、配置（適用ページ・位置）とデザイン（レイヤー）を設定。
+   同じスタンプをページごとに別の位置へ置くとき（例: 奇数ページは右下・偶数ページは左下）は「＋ 配置を追加」
 5. **PDF** タブで適用するスタンプにチェックを入れ **Generate PDF** → `output/<name>_stamped.pdf`
 6. 操作は `.pdf-workbench/history/events.jsonl` に記録され、source の SHA-256 は `jobs.json` に保存されます。
    前回処理後に元 PDF が変更されると「⚠ 元 PDF が前回処理時から変更されています」と警告します。

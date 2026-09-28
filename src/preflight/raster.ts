@@ -1,4 +1,4 @@
-import type { PageSize, Rect, PreflightWarningCode } from '@/core/types';
+import type { PageSize, PreflightFinding, PreflightWarningCode, Rect } from '@/core/types';
 
 /**
  * Structural stand-in for `ImageData` so these pure functions can be unit
@@ -112,6 +112,77 @@ export function checkMarginsByRaster(
   return codes;
 }
 
+/** Bounding box (pixel coords, inclusive-exclusive) of ink pixels within a region, or undefined if there are fewer than `minPixels`. */
+function inkBounds(
+  image: ImageDataLike,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+  threshold: number,
+  minPixels: number,
+): { left: number; top: number; right: number; bottom: number } | undefined {
+  const left = Math.max(0, Math.floor(x0));
+  const top = Math.max(0, Math.floor(y0));
+  const right = Math.min(image.width, Math.ceil(x1));
+  const bottom = Math.min(image.height, Math.ceil(y1));
+  let ink = 0;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let y = top; y < bottom; y++) {
+    const rowStart = y * image.width;
+    for (let x = left; x < right; x++) {
+      if (luminanceAt(image.data, rowStart + x) >= threshold) continue;
+      ink++;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+    }
+  }
+  return ink >= minPixels ? { left: minX, top: minY, right: maxX + 1, bottom: maxY + 1 } : undefined;
+}
+
+/**
+ * Like {@link checkMarginsByRaster}, but also says *where*: for each margin
+ * band containing ink, one finding whose `rect` is the bounding box of the
+ * ink inside that band (PDF visible space, pt, origin bottom-left).
+ */
+export function findMarginInkByRaster(
+  imageData: ImageDataLike,
+  pageSize: PageSize,
+  margins: MarginsPt,
+  opts: RasterCheckOptions = {},
+): PreflightFinding[] {
+  const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
+  const minPixels = opts.minPixels ?? DEFAULT_MIN_PIXELS;
+  const sx = imageData.width / pageSize.width;
+  const sy = imageData.height / pageSize.height;
+  const w = imageData.width;
+  const hgt = imageData.height;
+  const bands: [PreflightWarningCode, number, number, number, number][] = [
+    ['TOP_MARGIN', 0, 0, w, margins.top * sy],
+    ['BOTTOM_MARGIN', 0, hgt - margins.bottom * sy, w, hgt],
+    ['LEFT_MARGIN', 0, 0, margins.left * sx, hgt],
+    ['RIGHT_MARGIN', w - margins.right * sx, 0, w, hgt],
+  ];
+  const findings: PreflightFinding[] = [];
+  for (const [code, x0, y0, x1, y1] of bands) {
+    const b = inkBounds(imageData, x0, y0, x1, y1, threshold, minPixels);
+    if (!b) continue;
+    const rect: Rect = {
+      x: b.left / sx,
+      y: pageSize.height - b.bottom / sy,
+      width: (b.right - b.left) / sx,
+      height: (b.bottom - b.top) / sy,
+    };
+    findings.push({ code, source: 'raster', rect });
+  }
+  return findings;
+}
+
 export interface StampCollisionOptions extends RasterCheckOptions {
   /** Fraction (0..1) of non-white pixels within `rect` above which it counts as a collision. Default 0.01 (1%). */
   collisionRatio?: number;
@@ -156,6 +227,6 @@ export function checkStampCollision(
   return {
     collides,
     nonWhiteRatio,
-    message: collides ? '⚠ 既存コンテンツと重なります' : '✓ 空白領域なので配置可能',
+    message: collides ? '既存コンテンツと重なります' : '空白領域なので配置可能',
   };
 }

@@ -325,6 +325,38 @@ export interface SequenceEntry {
   output?: string;
 }
 
+/**
+ * Where the current `order` / `entries` came from, kept for audit purposes
+ * only (never read by the numbering logic itself).
+ *  - `import`: read from a dropped CSV/JSON file (`source` / `format`).
+ *  - `manual`: built up by hand in the Sequence tab (moves, pins, ...) with
+ *    no file import behind it.
+ *  - `name`: explicitly reset to natural name order ("ファイル名順に戻す").
+ *
+ * A manual edit that follows an import (e.g. nudging one row after dropping
+ * a CSV) does not overwrite `kind`/`source`/`format` — it only stamps
+ * `editedAt`, so the tab can show both "came from rename_map.csv" and
+ * "edited afterwards".
+ */
+export interface SequenceOrigin {
+  kind: 'import' | 'manual' | 'name';
+  /** Name of the dropped file, e.g. `rename_map.csv`. */
+  source?: string;
+  format?: 'csv' | 'json';
+  /** ISO-8601 with offset, set when `kind` is `import`. */
+  importedAt?: string;
+  /** ISO-8601 with offset of the most recent manual edit made after import. */
+  editedAt?: string;
+  /**
+   * Name of the column the source rows were ordered by, when the header
+   * suggests one (e.g. `Session Code`, `time`); `'file order'` when the
+   * file has no such column and its row order was simply taken as-is.
+   */
+  sortKey?: string;
+  /** Number of entries the import produced (excluding a skipped header row). */
+  rows?: number;
+}
+
 /** `.pdf-workbench/sequence.json` */
 export interface SequenceConfig {
   version: number;
@@ -333,6 +365,8 @@ export interface SequenceConfig {
   firstPage: number;
   startOn: SequenceStartOn;
   entries: SequenceEntry[];
+  /** Where this order came from (import / manual edit / name order). Advisory only. */
+  origin?: SequenceOrigin;
 }
 
 // ---------------------------------------------------------------------------

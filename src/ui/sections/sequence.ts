@@ -9,7 +9,8 @@
  * `.pdf-workbench/sequence.json` + `events.jsonl`); the ordering logic
  * itself is the pure `sequence/` module.
  */
-import type { SequenceConfig, SequenceOrder, SequenceStartOn } from '@/core/types';
+import type { SequenceConfig, SequenceOrder, SequenceOrigin, SequenceStartOn } from '@/core/types';
+import { formatTs } from '@/history/timestamp';
 import {
   describeRange,
   formatPageRangesTable,
@@ -38,6 +39,21 @@ const START_ON_LABEL: Record<SequenceStartOn, string> = {
   odd: '奇数ページ（右ページ）から開始',
   even: '偶数ページ（左ページ）から開始',
 };
+
+/** One line describing where the current order came from ("並び順の出どころ"). */
+function formatOrigin(origin: SequenceOrigin | undefined): string {
+  if (!origin) return '並び順の出どころ: 記録なし（インポート前，またはワークスペース作成時のまま）';
+  if (origin.kind === 'name') return '並び順の出どころ: ファイル名順に戻した';
+  if (!origin.source) return `並び順の出どころ: 手動編集${origin.editedAt ? `（${origin.editedAt} 更新）` : ''}`;
+  const parts: string[] = [];
+  if (origin.format) parts.push(origin.format.toUpperCase());
+  if (origin.rows !== undefined) parts.push(`${origin.rows} 件`);
+  if (origin.sortKey) parts.push(`並び: ${origin.sortKey}`);
+  if (origin.importedAt) parts.push(`${origin.importedAt} 取り込み`);
+  if (origin.editedAt) parts.push(`${origin.editedAt} 手動編集`);
+  const detail = parts.length ? `（${parts.join('，')}）` : '';
+  return `並び順の出どころ: ${origin.source}${detail}`;
+}
 
 export const sequenceSection: Section = {
   id: 'sequence',
@@ -145,7 +161,10 @@ export const sequenceSection: Section = {
       }
       const res = await ctrl.run(`${file.name} を読み込み`, () => importSequenceFile(ctrl, file));
       if (!res) return;
-      ctrl.toast('ok', `${res.source} から ${res.config.entries.length} 件の順序を読み込みました`);
+      const headerNote = res.header
+        ? `見出し行: ${(res.columns ?? []).filter((c): c is 'source' | 'output' => c === 'source' || c === 'output').join(', ')}（1 行目を見出しとして除外）`
+        : '見出し行なし';
+      ctrl.toast('ok', `${res.source} から ${res.rows} 件の順序を読み込みました（${headerNote}）`);
       for (const w of res.warnings) ctrl.toast('warn', w, 10000);
     }
 
@@ -190,10 +209,26 @@ export const sequenceSection: Section = {
     root.append(h('div', { class: 'grid grid-2' }, h('div', null, settingsPanel, importPanel, listPanel), exportPanel));
 
     // ------------------------------------------------------------ helpers
+    // Actions that change the effective row order (as opposed to firstPage /
+    // startOn / per-file overrides, which don't say anything about "order
+    // provenance"). Kept in sync with the `action` tags passed to `commit`
+    // below.
+    const REORDER_ACTIONS = new Set(['move', 'materialize']);
+
     async function commit(mutate: (cfg: SequenceConfig) => SequenceConfig, event?: Record<string, unknown>): Promise<void> {
       const ws = ctrl.state.workspace;
       if (!ws) return;
-      await ctrl.updateSequence(mutate(ws.sequence), event);
+      let next = mutate(ws.sequence);
+      const action = event?.action;
+      if (action === 'name-order') {
+        // Explicitly reset to natural name order: any import/manual history no longer applies.
+        next = { ...next, origin: { kind: 'name' } };
+      } else if (typeof action === 'string' && REORDER_ACTIONS.has(action)) {
+        // A manual reorder after an import keeps the import's provenance
+        // (source file, sortKey, ...) but notes that it was edited since.
+        next = { ...next, origin: next.origin ? { ...next.origin, editedAt: formatTs() } : { kind: 'manual', editedAt: formatTs() } };
+      }
+      await ctrl.updateSequence(next, event);
     }
 
     function filePaths(): string[] {
@@ -217,6 +252,7 @@ export const sequenceSection: Section = {
               )
             : '',
         ),
+        h('p', { class: 'muted settings-note' }, formatOrigin(ws?.sequence.origin)),
       ];
 
       if (!ws) {

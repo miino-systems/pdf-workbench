@@ -418,10 +418,19 @@ export interface PreflightMargins {
   unit: 'mm' | 'pt' | 'in';
   /**
    * How far (pt, whatever `unit` is) content may reach past a margin line
-   * before it counts as a violation. Default 2 pt. Separate from
+   * before it counts as a violation: one value for all four sides, or per
+   * side (a side left out uses the default). Default 2 pt. Separate from
    * `page.tolerance`, which only applies to the paper size.
    */
-  tolerance?: number;
+  tolerance?: number | MarginTolerance;
+}
+
+/** Per-side margin tolerance in pt (see `PreflightMargins.tolerance`). */
+export interface MarginTolerance {
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
 }
 
 /**

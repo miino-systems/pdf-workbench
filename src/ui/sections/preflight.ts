@@ -8,7 +8,7 @@
  * stamp-collision checks, rendering each page via `PdfRenderer` into an
  * offscreen canvas.
  */
-import type { PreflightConfig, PreflightReport } from '@/core/types';
+import type { MarginTolerance, PreflightConfig, PreflightReport } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
 import { DEFAULT_MARGIN_TOLERANCE_PT, summarizeReport } from '@/preflight';
@@ -152,13 +152,27 @@ function buildRulesForm(
     scheduleSave();
   });
 
-  const marginToleranceInput = optionalNumberInput(margins.tolerance, (n) => {
-    margins.tolerance = n !== undefined && n >= 0 ? n : undefined;
-    scheduleSave();
+  // Per-side margin tolerance. A single number in preflight.json (older
+  // files) fills all four boxes; any edit stores the per-side object, and
+  // clearing every box goes back to the default.
+  const sides = ['top', 'bottom', 'left', 'right'] as const;
+  const initialTol: MarginTolerance =
+    typeof margins.tolerance === 'number'
+      ? { top: margins.tolerance, bottom: margins.tolerance, left: margins.tolerance, right: margins.tolerance }
+      : { ...margins.tolerance };
+  const toleranceInputs = sides.map((side) => {
+    const inp = optionalNumberInput(initialTol[side], (n) => {
+      const next: MarginTolerance = typeof margins.tolerance === 'object' ? { ...margins.tolerance } : { ...initialTol };
+      if (n !== undefined && n >= 0) next[side] = n;
+      else delete next[side];
+      margins.tolerance = sides.some((s) => next[s] !== undefined) ? next : undefined;
+      scheduleSave();
+    });
+    inp.placeholder = String(DEFAULT_MARGIN_TOLERANCE_PT);
+    inp.step = '0.5';
+    inp.min = '0';
+    return inp;
   });
-  marginToleranceInput.placeholder = String(DEFAULT_MARGIN_TOLERANCE_PT);
-  marginToleranceInput.step = '0.5';
-  marginToleranceInput.min = '0';
 
   const pagesMinInput = optionalNumberInput(draft.pages?.min, (n) => {
     draft.pages = { ...draft.pages, min: n };
@@ -206,12 +220,20 @@ function buildRulesForm(
       field('左', leftInput),
       field('右', rightInput),
       field('単位', marginUnitSelect),
-      field('許容誤差 (pt)', marginToleranceInput),
+    ),
+    h('h3', null, '余白の許容誤差 (pt)'),
+    h(
+      'div',
+      { class: 'row' },
+      field('上', toleranceInputs[0]),
+      field('下', toleranceInputs[1]),
+      field('左', toleranceInputs[2]),
+      field('右', toleranceInputs[3]),
     ),
     h(
       'p',
       { class: 'muted settings-note' },
-      `余白の線からこの距離（pt）までのはみ出しは違反にしません（空欄 = ${DEFAULT_MARGIN_TOLERANCE_PT} pt）．両端揃えの行や最終行のベースラインが線にちょうど接する場合の誤検出を防ぎます．`,
+      `余白の線からこの距離（pt）までのはみ出しは違反にしません（辺ごと，空欄 = ${DEFAULT_MARGIN_TOLERANCE_PT} pt）．両端揃えの行や最終行のベースラインが線にちょうど接する場合の誤検出を防ぎます．`,
     ),
     h('h3', null, 'ページ数'),
     h('div', { class: 'row' }, field('最小', pagesMinInput), field('最大', pagesMaxInput)),

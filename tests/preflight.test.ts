@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PreflightConfig } from '@/core/types';
+import type { MarginTolerance, PreflightConfig } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import {
   checkMarginsByRaster,
@@ -266,5 +266,40 @@ describe('preflight: raster margin ink with tolerance and ignored areas', () => 
     expect(findMarginInkByRaster(image, page, margins).map((f) => f.code)).toEqual(['BOTTOM_MARGIN']);
     expect(findMarginInkByRaster(image, page, margins, { tolerance: 2 })).toEqual([]);
     expect(findMarginInkByRaster(image, page, margins, { ignore: [{ x: 39, y: 7, width: 5, height: 5 }] })).toEqual([]);
+  });
+});
+
+describe('preflight: per-side margin tolerance', () => {
+  it('resolves a number, a per-side object and defaults', async () => {
+    const { marginTolerancesPt } = await import('@/preflight');
+    const m = { top: 20, bottom: 20, left: 20, right: 20, unit: 'mm' as const };
+    expect(marginTolerancesPt(m)).toEqual({ top: 2, bottom: 2, left: 2, right: 2 });
+    expect(marginTolerancesPt({ ...m, tolerance: 1 })).toEqual({ top: 1, bottom: 1, left: 1, right: 1 });
+    expect(marginTolerancesPt({ ...m, tolerance: { right: 0, top: 5 } })).toEqual({ top: 5, bottom: 2, left: 2, right: 0 });
+    expect(marginTolerancesPt({ ...m, tolerance: { left: -1 } }).left).toBe(2);
+  });
+
+  it('applies each side its own tolerance in the text and raster checks', async () => {
+    const lineX = A4.width - (20 * 72) / 25.4;
+    const run = (tolerance: number | MarginTolerance, x: number) =>
+      buildFixturePdf([{ size: [A4.width, A4.height], texts: [{ text: 'Line', x, y: 500 }] }]).then((bytes) =>
+        runPreflight(bytes, baseConfig({ margins: { top: 20, bottom: 20, left: 20, right: 20, unit: 'mm', tolerance }, checks: { marginText: true } }), {
+          file: 'p.pdf',
+          sha256: 'x',
+        }),
+      );
+    const probe = (await run(0, lineX - 5)).pages[0].findings![0].rect!;
+    const x = lineX - probe.width + 1; // right edge 1 pt past the line
+    expect((await run({ right: 2 }, x)).pages[0].warnings).toEqual([]);
+    expect((await run({ right: 0.5, left: 5 }, x)).pages[0].warnings).toEqual(['RIGHT_MARGIN']);
+
+    const { findMarginInkByRaster } = await import('@/preflight');
+    const w = 100;
+    const data = new Uint8ClampedArray(w * w * 4).fill(255);
+    for (let y = 50; y < 52; y++) for (let x2 = 91; x2 < 92; x2++) data.set([0, 0, 0, 255], (y * w + x2) * 4); // 1 pt into a 10 pt right margin
+    const image = { data, width: w, height: w };
+    const margins = { top: 10, bottom: 10, left: 10, right: 10 };
+    expect(findMarginInkByRaster(image, { width: 100, height: 100 }, margins, { tolerance: { top: 0, bottom: 0, left: 0, right: 2 } })).toEqual([]);
+    expect(findMarginInkByRaster(image, { width: 100, height: 100 }, margins, { tolerance: { top: 2, bottom: 2, left: 2, right: 0 } }).map((f) => f.code)).toEqual(['RIGHT_MARGIN']);
   });
 });

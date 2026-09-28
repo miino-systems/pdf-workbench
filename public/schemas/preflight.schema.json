@@ -140,9 +140,35 @@
           "description": "top/bottom/left/right の単位。"
         },
         "tolerance": {
-          "type": "number",
-          "minimum": 0,
-          "description": "余白の線からこの距離（pt、unit によらず pt）までのはみ出しは違反にしない。既定 2。page.tolerance（用紙サイズの許容誤差）とは別。"
+          "description": "余白の線からこの距離（pt、unit によらず pt）までのはみ出しは違反にしない。数値なら上下左右共通、オブジェクトなら辺ごと（省略した辺は既定 2）。page.tolerance（用紙サイズの許容誤差）とは別。",
+          "oneOf": [
+            {
+              "type": "number",
+              "minimum": 0
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "top": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "bottom": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "left": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "right": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          ]
         }
       }
     },

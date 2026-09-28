@@ -265,7 +265,8 @@ baseline = ページ上端 − offsetY − 0.8 × size
   "id": "proceedings",
   "name": "予稿集",
   "page": { "size": "A4", "orientation": "portrait", "tolerance": 2 },
-  "margins": { "top": 20, "bottom": 20, "left": 18, "right": 18, "unit": "mm", "tolerance": 2 },
+  "margins": { "top": 20, "bottom": 20, "left": 18, "right": 18, "unit": "mm",
+               "tolerance": { "top": 2, "bottom": 2, "left": 2, "right": 0.5 } },
   "marginOverrides": [
     { "pages": { "kind": "first" }, "margins": { "top": 35 } }
   ],
@@ -276,7 +277,9 @@ baseline = ページ上端 − offsetY − 0.8 × size
 
 - `page.tolerance` は**用紙サイズの判定だけ**に使う許容誤差（pt）です。
 - `margins.tolerance`（pt、既定 2）は余白の許容誤差です。余白の線からこの
-  距離までのはみ出しは違反にしません。両端揃えの行の右端や最終行の
+  距離までのはみ出しは違反にしません。数値 1 つなら上下左右共通、
+  `{ "top", "bottom", "left", "right" }` のオブジェクトなら辺ごとに指定でき
+  ます（省略した辺は 2）。両端揃えの行の右端や最終行の
   ベースラインが線にちょうど接している場合の誤検出を防ぎます。
 - 文字は**ベースライン**で判定します（下余白では、最終行のベースラインが
   線より下に出たら違反）。描画ベースのチェック（`marginRaster`）は、文字

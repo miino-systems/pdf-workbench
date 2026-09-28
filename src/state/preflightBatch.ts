@@ -21,7 +21,7 @@ import {
   checkStampCollision,
   describePreflightCode,
   findMarginInkByRaster,
-  marginTolerancePt,
+  marginTolerancesPt,
   marginsForPage,
   mergeFindings,
   reportFileName,
@@ -141,7 +141,7 @@ export async function preflightOne(
           image,
           pageSize,
           { top: toPt(m.top, m.unit), bottom: toPt(m.bottom, m.unit), left: toPt(m.left, m.unit), right: toPt(m.right, m.unit) },
-          { tolerance: marginTolerancePt(config.margins), ignore: (texts.get(page) ?? []).filter((t) => t.str.trim()).map(textInkRect) },
+          { tolerance: marginTolerancesPt(config.margins), ignore: (texts.get(page) ?? []).filter((t) => t.str.trim()).map(textInkRect) },
         ),
       );
     }

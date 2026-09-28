@@ -86,8 +86,15 @@
     },
     "skipFiles": {
       "type": "array",
-      "description": "一括検査でスルーする PDF の Workspace 内パス（例: papers/9002.pdf）。誤検出が分かっている PDF 用。PDF タブで指定できる。",
+      "description": "一括検査でスルーする PDF の Workspace 内パス（例: papers/9002.pdf）。誤検出が分かっている PDF 用。Preflight タブの「検査結果」で指定できる。",
       "items": {
+        "type": "string"
+      }
+    },
+    "annotationMessages": {
+      "type": "object",
+      "description": "注釈付きコピーのコメントをコードごとに差し替える（既定は英語）。キーは TOP_MARGIN などのコード、テキストルールの \"TEXT_FORBIDDEN:<id>\"、その種類全体の TEXT_FORBIDDEN（{id} はルールの id に置き換わる）、見えない要素の説明の PHANTOM。空文字は既定のまま。",
+      "additionalProperties": {
         "type": "string"
       }
     },

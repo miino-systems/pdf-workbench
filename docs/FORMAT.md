@@ -343,6 +343,26 @@ baseline = ページ上端 − offsetY − 0.8 × size
   絞り込みには引き続き使えます）。スルーを外すとその PDF をすぐ検査し
   直し、summary と注釈付きコピーを更新します。「1 件だけ検査」では
   スルー中でも検査できますが、summary と注釈付きコピーは更新しません。
+- `annotationMessages` は注釈付きコピー（著者に返す PDF）の赤枠と付箋に
+  書くコメントを、コードごとに差し替えます。既定のコメントは英語です
+  （例: `TOP_MARGIN` → `Content extends into the top margin.`）。
+  Preflight タブのルールの「注釈付きコピーのコメント」でも編集できます。
+  ```json
+  "annotationMessages": {
+    "TOP_MARGIN": "Please keep the header area (top 20 mm) empty.",
+    "TEXT_FORBIDDEN:page-number": "Please remove page numbers; they are added in production.",
+    "PHANTOM": "For reference only: nothing visible is here."
+  }
+  ```
+  - キーはコード（`TOP_MARGIN`、`TEXT_OVERLAP` など）、テキストルールの
+    `TEXT_REQUIRED:<id>` / `TEXT_FORBIDDEN:<id>`、見えない要素（phantom）に
+    添える説明の `PHANTOM` です。
+  - テキストルールのコメントは、`annotationMessages` の
+    `TEXT_FORBIDDEN:<id>` などがあればそれ、なければルールの `message`、
+    それもなければ `annotationMessages` / 既定の `TEXT_FORBIDDEN` など
+    （`{id}` がルールの id に置き換わります）の順に決まります。
+  - 空文字は既定のままです。アプリの画面（検査結果の一覧など）の説明は
+    日本語のままで、これには影響しません。
 - `checks`:
   - `marginText`: PDF のテキストオブジェクト座標に基づく余白チェック。
   - `marginRaster`: ラスタライズした画像に基づく余白チェック

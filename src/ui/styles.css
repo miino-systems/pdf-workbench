@@ -373,3 +373,10 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
   .results-list { max-height: 50vh; }
   .results-pages { max-height: 80vh; }
 }
+
+/* Preflight rules: comments of the annotated copy */
+.annotation-messages > summary { cursor: pointer; margin-bottom: 6px; }
+.annotation-message { display: grid; grid-template-columns: minmax(0, 14em) minmax(0, 1fr); gap: 8px; align-items: center; margin: 4px 0; }
+.annotation-message > span { display: flex; flex-direction: column; min-width: 0; }
+.annotation-message > span > .muted { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotation-message input { width: 100%; }

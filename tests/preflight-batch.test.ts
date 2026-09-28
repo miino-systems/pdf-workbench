@@ -198,7 +198,7 @@ describe('phantom margin content', () => {
     const copy = await PDFDocument.load(await ws.fs.readBytes(item.annotated!));
     const annots = copy.getPage(0).node.lookup(PDFName.of('Annots'), PDFArray);
     const contents = annots.asArray().map((ref) => copy.context.lookup(ref, PDFDict).get(PDFName.of('Contents'))!.toString());
-    expect(contents.some((c) => c.includes(Buffer.from('（参考）見えない文字', 'utf16le').swap16().toString('hex').toUpperCase()))).toBe(true);
+    expect(contents.some((c) => c.includes(Buffer.from('For reference only', 'utf16le').swap16().toString('hex').toUpperCase()))).toBe(true);
   });
 
   it('keeps the warning when the margin text shows', async () => {

@@ -11,7 +11,16 @@
 import type { MarginTolerance, PageSelector, PreflightConfig, PreflightFinding, PreflightReport, PreflightTextRule } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
-import { DEFAULT_MARGIN_TOLERANCE_PT, describePreflightCode, summarizeReport } from '@/preflight';
+import {
+  DEFAULT_ANNOTATION_MESSAGES,
+  DEFAULT_MARGIN_TOLERANCE_PT,
+  PHANTOM_MESSAGE_KEY,
+  TEXT_FORBIDDEN,
+  TEXT_REQUIRED,
+  TEXT_RULE_INVALID,
+  describePreflightCode,
+  summarizeReport,
+} from '@/preflight';
 import { parsePageList } from '@/stamps';
 import type { AppController, AppState } from '@/state/app';
 import { isPreflightSkipped, loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
@@ -242,6 +251,45 @@ interface SaveRef {
   savingJson?: string;
 }
 
+/**
+ * "注釈付きコピーのコメント": one field per code, empty = the English
+ * default (shown as the placeholder). Saved as `annotationMessages`.
+ */
+const TEXT_RULE_KINDS: readonly string[] = [TEXT_REQUIRED, TEXT_FORBIDDEN, TEXT_RULE_INVALID];
+
+function buildAnnotationMessagesEditor(draft: PreflightConfig, onChange: () => void): HTMLElement {
+  const summary = h('summary');
+  const count = (): void => {
+    summary.textContent = `コードごとのコメント（変更 ${Object.keys(draft.annotationMessages ?? {}).length} 件）`;
+  };
+  count();
+  const rows = Object.entries(DEFAULT_ANNOTATION_MESSAGES).map(([key, fallback]) => {
+    const input = h('input', { type: 'text', value: draft.annotationMessages?.[key] ?? '', placeholder: fallback });
+    input.addEventListener('input', () => {
+      const next = { ...draft.annotationMessages };
+      if (input.value.trim()) next[key] = input.value;
+      else delete next[key];
+      draft.annotationMessages = Object.keys(next).length ? next : undefined;
+      count();
+      onChange();
+    });
+    const what = key === PHANTOM_MESSAGE_KEY ? '見えない要素（参考）に添える説明' : describePreflightCode(TEXT_RULE_KINDS.includes(key) ? `${key}:{id}` : key);
+    return h('label', { class: 'annotation-message' }, h('span', null, h('code', null, key), h('span', { class: 'muted' }, what)), input);
+  });
+  return h(
+    'details',
+    { class: 'annotation-messages' },
+    summary,
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      '空欄は既定の英語のコメント（灰色の文字）になります．テキストルールは各ルールの「メッセージ」がコメントになり，ここの TEXT_REQUIRED などはメッセージのないルールに使われます（{id} はルールの id）．' +
+        'ルールごとに別のコメントにしたいときは preflight.json の annotationMessages に "TEXT_FORBIDDEN:<id>" のキーで書けます．',
+    ),
+    rows,
+  );
+}
+
 function buildRulesForm(
   ctrl: AppController,
   draft: PreflightConfig,
@@ -453,6 +501,13 @@ function buildRulesForm(
         '文字の重なり: 別々の文字列が重なって描かれている箇所（ロゴが文字に化けて重なった等の表示崩れ）を報告します．' +
         'フォント埋め込み: 埋め込まれていないフォントと Type 3 フォントを，最初に使われたページで報告します．',
     ),
+    h('h3', null, '注釈付きコピーのコメント'),
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      '注釈付きコピー（著者に返す PDF）の赤枠と付箋に書くコメントです．既定は英語です．',
+    ),
+    buildAnnotationMessagesEditor(draft, scheduleSave),
     h('div', { class: 'row', style: 'margin-top:8px' }, button('保存', () => saveNowRef.save(), 'btn btn-primary btn-sm'), statusEl),
   );
 }

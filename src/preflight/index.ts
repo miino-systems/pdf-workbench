@@ -50,4 +50,10 @@ export {
 } from './textRules.js';
 export { findTextOverlaps } from './overlap.js';
 export { reportFileName, summarizeReport } from './report.js';
-export { annotatePreflightPdf, describePreflightCode } from './annotate.js';
+export {
+  DEFAULT_ANNOTATION_MESSAGES,
+  PHANTOM_MESSAGE_KEY,
+  annotatePreflightPdf,
+  annotationMessage,
+  describePreflightCode,
+} from './annotate.js';

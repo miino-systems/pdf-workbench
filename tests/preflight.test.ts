@@ -237,7 +237,7 @@ describe('preflight: margin tolerance and merged findings', () => {
     const merged = mergeFindings([...lines, { code: 'LEFT_MARGIN', source: 'text', rect: { x: 10, y: 400, width: 50, height: 10 }, text: 'left' }]);
     expect(merged).toHaveLength(2);
     const right = merged.find((f) => f.code === 'RIGHT_MARGIN')!;
-    expect(right.text).toBe('line 0 … ほか 29 行');
+    expect(right.text).toBe('line 0 … (+29 lines)');
     expect(right.rect).toEqual({ x: 300, y: 600 - 29 * 12, width: 240, height: 29 * 12 + 10 });
 
     // Far-apart hits stay separate, but one code never crowds out another.

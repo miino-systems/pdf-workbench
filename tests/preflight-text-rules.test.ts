@@ -101,3 +101,39 @@ describe('invalid rules', () => {
     expect(describePreflightCode('TEXT_REQUIRED:orcid')).toContain('orcid');
   });
 });
+
+describe('annotationMessage', () => {
+  it('is English by default and follows annotationMessages, then the rule message', async () => {
+    const { annotationMessage } = await import('@/preflight');
+    const base: PreflightConfig = { version: 1, id: 't' };
+    expect(annotationMessage('TOP_MARGIN')).toBe('Content extends into the top margin.');
+    expect(annotationMessage('TEXT_REQUIRED:orcid')).toBe('Required text is missing (orcid).');
+    expect(annotationMessage('SOMETHING_NEW')).toBe('SOMETHING_NEW');
+
+    const custom: PreflightConfig = {
+      ...base,
+      textRules: [ORCID, { id: 'pagenum', forbid: '^\\d+$' }],
+      annotationMessages: { TOP_MARGIN: 'Please keep the header area empty.', TEXT_FORBIDDEN: 'Remove "{id}" text.', 'TEXT_REQUIRED:orcid': 'Add your ORCID iDs.', BOTTOM_MARGIN: '  ' },
+    };
+    expect(annotationMessage('TOP_MARGIN', custom)).toBe('Please keep the header area empty.');
+    expect(annotationMessage('BOTTOM_MARGIN', custom)).toBe('Content extends into the bottom margin.'); // blank = default
+    expect(annotationMessage('TEXT_REQUIRED:orcid', custom)).toBe('Add your ORCID iDs.'); // beats the rule message
+    expect(annotationMessage('TEXT_FORBIDDEN:pagenum', custom)).toBe('Remove "pagenum" text.');
+    expect(annotationMessage('TEXT_REQUIRED:orcid', { ...base, textRules: [ORCID] })).toBe('ORCID 欄がありません');
+  });
+
+  it('writes the chosen text into the review copy', async () => {
+    const rule: PreflightTextRule = { id: 'draft', forbid: 'DRAFT', message: '下書き表示を消してください' };
+    const { bytes, report } = await check([['Title', 'DRAFT']], [rule]);
+    const cfg: PreflightConfig = { ...config([rule]), annotationMessages: { 'TEXT_FORBIDDEN:draft': 'Please remove the DRAFT mark.' } };
+    const copy = await PDFDocument.load(await annotatePreflightPdf(bytes, report, cfg));
+    const texts = copy
+      .getPage(0)
+      .node.Annots()!
+      .asArray()
+      .map((ref) => /\/Contents <([0-9A-F]+)>/i.exec(String(copy.context.lookup(ref)!.toString()))![1])
+      .map((hex) => new TextDecoder('utf-16be').decode(Uint8Array.from(hex.match(/../g)!.map((b) => parseInt(b, 16)))));
+    expect(texts.some((t) => t.startsWith('Please remove the DRAFT mark. (text: "DRAFT")'))).toBe(true);
+    expect(texts.some((t) => t.includes('• Please remove the DRAFT mark.'))).toBe(true);
+  });
+});

@@ -411,6 +411,12 @@ export const pdfSection: Section = {
       const orderIndex = new Map((state.sequence?.items ?? []).map((it, i) => [it.file, i]));
       const byOrder = (a: PdfFileItem, b: PdfFileItem): number =>
         (orderIndex.get(a.path) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(b.path) ?? Number.MAX_SAFE_INTEGER);
+      /** The output's file name, in gray after the source name (unless it is the same). */
+      const outputNameHint = (path: string, name: string): HTMLElement | string => {
+        const out = ctrl.outputPathFor(path);
+        const outName = basename(out);
+        return outName === name ? '' : h('span', { class: 'output-name', title: `出力: ${out}` }, outName);
+      };
       const children: (HTMLElement | string)[] = [];
       if (!ws) {
         children.push(
@@ -440,7 +446,7 @@ export const pdfSection: Section = {
                   on: { click: () => void ctrl.selectFile(f.path) },
                 },
                 h('span', { class: `status-icon ${label.cls}` }, icon(label.icon as IconName, { label: label.text })),
-                h('span', { class: 'name' }, f.name),
+                h('span', { class: 'name' }, f.name, outputNameHint(f.path, f.name)),
                 g.id === 'update' ? h('span', { class: 'update-chip' }, '要更新') : '',
                 isPreflightSkipped(ws.preflight, f.path)
                   ? h('span', { class: 'skip-chip', title: 'Preflight の一括検査でスルーします（ジョブ情報で解除）' }, '検査スルー')

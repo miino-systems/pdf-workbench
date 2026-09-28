@@ -37,11 +37,14 @@ export const pdfSection: Section = {
   title: 'PDF',
   mount(root, ctrl) {
     // ---------------------------------------------------------- sidebar
-    const filesPanel = h('div', { class: 'panel' });
-    const stampsPanel = h('div', { class: 'panel' });
+    // The file list scrolls on its own so the whole tab fits in one screen.
+    const filesHeader = h('div', { class: 'row', style: 'justify-content:space-between' });
+    const filesScroll = h('div', { class: 'pdf-files-scroll' });
+    const filesPanel = h('div', { class: 'panel pdf-files' }, filesHeader, filesScroll);
+    const stampsPanel = h('div', { class: 'panel pdf-stamps' });
     const jobPanel = h('div', { class: 'panel' });
     const actionsPanel = h('div', { class: 'panel' });
-    const sidebar = h('div', null, filesPanel, stampsPanel, jobPanel, actionsPanel);
+    const sidebar = h('div', { class: 'pdf-sidebar' }, filesPanel, stampsPanel, jobPanel, actionsPanel);
 
     // ------------------------------------------------------------ main
     const pageInput = h('input', {
@@ -114,9 +117,9 @@ export const pdfSection: Section = {
     const placeholder = h('p', { class: 'muted' }, 'ファイルを選択してください');
     const previewWrap = h('div', { class: 'preview-wrap' }, placeholder, previewPage);
 
-    const previewPanel = h('div', { class: 'panel' }, h('h2', null, 'Preview'), toolbar, collisionMsg, previewWrap);
+    const previewPanel = h('div', { class: 'panel pdf-preview' }, h('h2', null, 'Preview'), toolbar, collisionMsg, previewWrap);
 
-    root.append(h('div', { class: 'grid grid-sidebar' }, sidebar, previewPanel));
+    root.append(h('div', { class: 'grid grid-sidebar pdf-layout' }, sidebar, previewPanel));
 
     // ------------------------------------------------------- render state
     let latestState: AppState = ctrl.state;
@@ -341,14 +344,12 @@ export const pdfSection: Section = {
 
     function renderFiles(state: AppState): void {
       const ws = state.workspace;
-      const children: (HTMLElement | string)[] = [
-        h(
-          'div',
-          { class: 'row', style: 'justify-content:space-between' },
-          h('h2', null, 'PDF Files'),
-          ws ? button('🔄 再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm') : '',
-        ),
-      ];
+      replaceChildren(
+        filesHeader,
+        h('h2', null, 'PDF Files', ws && state.files.length ? h('span', { class: 'muted' }, ` (${state.files.length})`) : ''),
+        ws ? button('🔄 再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm') : '',
+      );
+      const children: (HTMLElement | string)[] = [];
       if (!ws) {
         children.push(
           h('div', { class: 'alert warn' }, 'Workspace が開かれていません．Workspace タブでディレクトリを開いてください．'),
@@ -366,6 +367,7 @@ export const pdfSection: Section = {
               return h(
                 'li',
                 {
+                  dataset: { path: f.path },
                   attrs: { role: 'option', 'aria-selected': String(f.path === state.selectedFile) },
                   title: label.text,
                   on: { click: () => void ctrl.selectFile(f.path) },
@@ -381,7 +383,17 @@ export const pdfSection: Section = {
           ),
         );
       }
-      replaceChildren(filesPanel, ...children);
+      // Rebuilding the list resets its scroll offset: keep it, and bring a
+      // newly selected file into view.
+      const scrollTop = filesScroll.scrollTop;
+      replaceChildren(filesScroll, ...children);
+      filesScroll.scrollTop = scrollTop;
+      if (state.selectedFile !== lastSelectedFile) {
+        const sel = [...filesScroll.querySelectorAll<HTMLElement>('li[data-path]')].find(
+          (li) => li.dataset.path === state.selectedFile,
+        );
+        sel?.scrollIntoView({ block: 'nearest' });
+      }
     }
 
     function renderStamps(state: AppState): void {

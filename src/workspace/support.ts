@@ -56,3 +56,17 @@ export async function ensurePermission(
   const requested = await capable.requestPermission({ mode });
   return requested === 'granted';
 }
+
+/**
+ * True when `mode` permission is already granted, without prompting (usable
+ * at page load, where `requestPermission` would need a user gesture).
+ */
+export async function hasPermission(handle: FileSystemDirectoryHandle, mode: 'read' | 'readwrite'): Promise<boolean> {
+  const capable = handle as unknown as PermissionCapableHandle;
+  if (typeof capable.queryPermission !== 'function') return true;
+  try {
+    return (await capable.queryPermission({ mode })) === 'granted';
+  } catch {
+    return false;
+  }
+}

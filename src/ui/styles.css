@@ -70,7 +70,7 @@ h3 { font-size: 13px; margin: 12px 0 6px; color: var(--muted); text-transform: u
 hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 
 /* Layout */
-.app { display: flex; flex-direction: column; min-height: 100%; }
+.app { display: flex; flex-direction: column; height: 100vh; }
 .app-header {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
   padding: 10px 16px;
@@ -91,7 +91,12 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 }
 .tabs button:hover { color: var(--text); background: var(--bg); }
 .tabs button[aria-selected='true'] { color: var(--text); background: var(--bg); border-color: var(--border); font-weight: 600; }
-.app-main { flex: 1; padding: 16px; max-width: 1400px; width: 100%; margin: 0 auto; }
+.app-main {
+  flex: 1; min-height: 0; overflow: auto; padding: 16px;
+  display: flex; flex-direction: column;
+}
+.app-main > .section { flex: 0 0 auto; max-width: 1400px; width: 100%; margin: 0 auto; }
+.header-actions { gap: 4px; }
 .app-footer { padding: 8px 16px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); }
 .section[hidden] { display: none; }
 
@@ -217,7 +222,24 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .anchor-btn.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
 .position-editor { display: flex; flex-direction: column; gap: 6px; }
 
-/* pdf section */
+/* pdf section: fills the viewport; only the file list and preview scroll */
+.app-main > #section-pdf { flex: 1 1 auto; min-height: 0; }
+.pdf-layout { height: 100%; min-height: 420px; grid-template-rows: minmax(0, 1fr); }
+.pdf-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.pdf-sidebar > .panel { margin-top: 0; flex: 0 0 auto; }
+.pdf-sidebar > .pdf-files { flex: 1 1 auto; min-height: 140px; display: flex; flex-direction: column; }
+.pdf-files-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+.pdf-sidebar > .pdf-stamps { max-height: 30vh; overflow-y: auto; }
+.pdf-sidebar > .panel h2 { margin-bottom: 6px; }
+.pdf-sidebar .list li { padding: 4px 8px; }
+.pdf-preview { display: flex; flex-direction: column; min-height: 0; }
+.pdf-preview .preview-wrap { flex: 1 1 auto; min-height: 0; max-height: none; }
+@media (max-width: 1000px) {
+  .app-main > #section-pdf { flex: 0 0 auto; }
+  .pdf-layout { height: auto; grid-template-rows: none; }
+  .pdf-sidebar > .pdf-files { max-height: 50vh; }
+  .pdf-preview .preview-wrap { max-height: 80vh; }
+}
 .stamp-overlay-layer { position: absolute; inset: 0; pointer-events: none; }
 .stamp-overlay-layer .stamp-overlay { pointer-events: auto; }
 

@@ -8,6 +8,7 @@ export {
   isLocalFontAccessSupported,
   pickWorkspaceDirectory,
   ensurePermission,
+  hasPermission,
 } from './support';
 
 export { WorkspaceFS, normalizeWorkspacePath } from './fs';

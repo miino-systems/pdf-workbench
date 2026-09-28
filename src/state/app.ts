@@ -25,6 +25,7 @@ import {
   WorkspaceFS,
   ensurePermission,
   forgetWorkspace,
+  hasPermission,
   initializeWorkspace,
   isFileSystemAccessSupported,
   isWorkspaceInitialized,
@@ -47,6 +48,7 @@ import { resolveSequence, sequenceItemFor, type ResolvedSequence, type SequenceF
 import type { HistoryEvent } from '@/core/types';
 import { Store } from './store';
 import { loadPrefs, savePrefs, type UiPrefs } from './prefs';
+import { UndoStack, changedKinds, stampEditLabel, type ConfigSnapshot } from './undo';
 
 export type FileStatus =
   | 'not-processed'
@@ -95,7 +97,11 @@ export interface AppState {
    * `refreshSequence()` (page counts are read lazily and cached per file).
    */
   sequence?: ResolvedSequence;
+  /** Labels of the next undo / redo step (undefined when there is none). */
+  undo: { undo?: string; redo?: string };
 }
+
+type LoadMode = 'opened' | 'initialized' | 'reloaded';
 
 let toastSeq = 0;
 
@@ -117,6 +123,8 @@ export class AppController {
   private sequenceSeq = 0;
   /** Page counts of source PDFs, keyed by path and invalidated by size/mtime (reset when the workspace changes). */
   private pageCountCache = new Map<string, { size: number; lastModified: number; pageCount?: number }>();
+  /** Undo/redo of config edits in the current workspace (cleared whenever it is (re)loaded or closed). */
+  private undoStack = new UndoStack();
 
   constructor() {
     this.store = new Store<AppState>({
@@ -128,6 +136,7 @@ export class AppController {
       pageCount: 0,
       toasts: [],
       events: [],
+      undo: {},
     });
   }
 
@@ -213,7 +222,7 @@ export class AppController {
         this.store.set({ pendingInit: { handle, fs }, workspace: undefined, files: [], selectedFile: undefined });
         return;
       }
-      await this.loadInto(handle, fs, false);
+      await this.loadInto(handle, fs, 'opened');
     });
   }
 
@@ -231,13 +240,53 @@ export class AppController {
       }));
       await saveStampsConfig(state.fs, state.stamps);
       this.store.set({ pendingInit: undefined });
-      await this.loadInto(pending.handle, pending.fs, true);
+      await this.loadInto(pending.handle, pending.fs, 'initialized');
     });
   }
 
-  private async loadInto(handle: FileSystemDirectoryHandle, fs: WorkspaceFS, justInitialized: boolean): Promise<void> {
+  /**
+   * Re-read the open workspace from disk (Cmd+R / 🔄): picks up files and
+   * `.pdf-workbench/*.json` edited outside the app, keeping the selected PDF
+   * and page. With no workspace open, reopens the most recently used one.
+   */
+  async reloadWorkspace(): Promise<void> {
+    const { workspace, workspaceHandle, selectedFile, currentPage } = this.state;
+    if (workspace && workspaceHandle) {
+      await this.run('Workspace を再読み込み', () => this.loadInto(workspaceHandle, new WorkspaceFS(workspaceHandle), 'reloaded'));
+      if (this.state.workspaceHandle !== workspaceHandle) return;
+      if (selectedFile && this.state.files.some((f) => f.path === selectedFile)) {
+        await this.selectFile(selectedFile, currentPage);
+      }
+      this.toast('ok', `🔄 「${workspace.config.name}」を再読み込みしました`);
+      return;
+    }
+    await this.refreshRecent();
+    const latest = this.state.recent[0];
+    if (!latest) {
+      this.toast('info', '最近使った Workspace がありません．Workspace タブでディレクトリを選択してください．');
+      return;
+    }
+    await this.openRecent(latest);
+    if (this.state.workspaceHandle === latest.handle) this.toast('ok', `🔄 「${latest.name}」を開きました`);
+  }
+
+  /**
+   * At startup, silently reopen the most recently used workspace when the
+   * browser still grants access to it (no prompt is possible without a user
+   * gesture; otherwise Cmd+R / the Workspace tab reopens it).
+   */
+  async restoreLastWorkspace(): Promise<void> {
+    if (!this.state.fsSupported) return;
+    await this.refreshRecent();
+    const latest = this.state.recent[0];
+    if (!latest || this.state.workspace || !(await hasPermission(latest.handle, 'readwrite'))) return;
+    await this.openHandle(latest.handle);
+  }
+
+  private async loadInto(handle: FileSystemDirectoryHandle, fs: WorkspaceFS, mode: LoadMode): Promise<void> {
     this.wsEpoch += 1;
     this.pageCountCache.clear();
+    this.undoStack.clear();
     const workspace = await loadWorkspace(fs);
     this.journal = new HistoryJournal(fs, { hashChain: workspace.config.history.hashChain });
     this.snapshots = new SnapshotStore(fs);
@@ -251,13 +300,17 @@ export class AppController {
       pageCount: 0,
       currentPage: 1,
       sequence: undefined,
+      undo: {},
     });
     for (const w of workspace.warnings) this.toast('warn', w);
     await rememberWorkspaceHandle(handle).catch(() => undefined);
     await this.refreshRecent();
-    await this.log(justInitialized ? EVENT_TYPES.workspaceInitialized : EVENT_TYPES.workspaceOpened, {
-      name: workspace.config.name,
-    });
+    const eventType = {
+      opened: EVENT_TYPES.workspaceOpened,
+      initialized: EVENT_TYPES.workspaceInitialized,
+      reloaded: EVENT_TYPES.workspaceReloaded,
+    }[mode];
+    await this.log(eventType, { name: workspace.config.name });
     await this.refreshFiles();
     await this.refreshEvents();
   }
@@ -265,6 +318,7 @@ export class AppController {
   closeWorkspace(): void {
     this.wsEpoch += 1;
     this.pageCountCache.clear();
+    this.undoStack.clear();
     this.journal = undefined;
     this.snapshots = undefined;
     this.store.set({
@@ -278,6 +332,7 @@ export class AppController {
       events: [],
       pageCount: 0,
       sequence: undefined,
+      undo: {},
     });
   }
 
@@ -362,8 +417,10 @@ export class AppController {
   /** Persist a new `sequence.json`, log the change and re-resolve the numbering. */
   async updateSequence(next: SequenceConfig, event?: Record<string, unknown>): Promise<void> {
     const ws = this.requireWorkspace();
+    const before = snapshotOf(ws);
     ws.sequence = next;
     await saveSequenceConfig(ws.fs, next);
+    this.recordUndo('通し番号の設定を変更', before, ws);
     this.store.set({ workspace: { ...ws } });
     await this.log(EVENT_TYPES.sequenceUpdated, {
       order: next.order,
@@ -396,7 +453,8 @@ export class AppController {
     }
   }
 
-  async selectFile(path: string | undefined): Promise<void> {
+  /** Select a source PDF (read + hash it) and show `page` (default 1; clamped once the page count is known). */
+  async selectFile(path: string | undefined, page = 1): Promise<void> {
     const ws = this.requireWorkspace();
     const epoch = this.wsEpoch;
     if (!path) {
@@ -416,7 +474,7 @@ export class AppController {
         selectedFile: path,
         selectedBytes: bytes,
         selectedSha256: hash,
-        currentPage: 1,
+        currentPage: Math.max(1, page),
         files: s.files.map((f) => (f.path === path ? { ...f, sha256: hash, status: this.statusFor(f.job, hash, path) } : f)),
       }));
       const item = this.state.files.find((f) => f.path === path);
@@ -437,12 +495,23 @@ export class AppController {
 
   // --------------------------------------------------------------- stamps
 
+  /**
+   * Mutate and persist `stamps.json`. Edits that carry an `event` are user
+   * actions: they are logged and can be undone; bookkeeping updates without
+   * one (e.g. font hashes recorded by `generate.ts`) are neither.
+   */
   async updateStamps(mutate: (cfg: StampsConfig) => void, event?: { type: string; [k: string]: unknown }): Promise<void> {
     const ws = this.requireWorkspace();
+    const before = snapshotOf(ws);
     const next = structuredClone(ws.stamps);
     mutate(next);
     ws.stamps = next;
     await saveStampsConfig(ws.fs, next);
+    if (event) {
+      const target = typeof event.instance === 'string' ? event.instance : typeof event.stamp === 'string' ? event.stamp : '';
+      const mergeable = event.type === EVENT_TYPES.stampMoved || event.type === EVENT_TYPES.stampUpdated;
+      this.recordUndo(stampEditLabel(event.type, stampNameFor(before.stamps, next, event)), before, ws, mergeable ? `${event.type}:${target}` : undefined);
+    }
     this.store.set({ workspace: { ...ws } });
     if (event) await this.log(event.type, event);
   }
@@ -545,17 +614,21 @@ export class AppController {
 
   async updateWorkspaceConfig(config: WorkspaceConfig): Promise<void> {
     const ws = this.requireWorkspace();
+    const before = snapshotOf(ws);
     ws.config = config;
     await saveWorkspaceConfig(ws.fs, config);
     this.journal = new HistoryJournal(ws.fs, { hashChain: config.history.hashChain });
+    this.recordUndo('Workspace 設定を変更', before, ws);
     this.store.set({ workspace: { ...ws } });
     await this.log('workspace.updated', {});
   }
 
   async updatePreflightConfig(config: PreflightConfig): Promise<void> {
     const ws = this.requireWorkspace();
+    const before = snapshotOf(ws);
     ws.preflight = config;
     await savePreflightConfig(ws.fs, config);
+    this.recordUndo('Preflight ルールを変更', before, ws);
     this.store.set({ workspace: { ...ws } });
     await this.log('preflight.updated', { id: config.id });
   }
@@ -572,6 +645,67 @@ export class AppController {
     const ws = this.requireWorkspace();
     const entry = ws.sequence.entries.find((e) => e.file === sourcePath);
     return outputPathFor(sourcePath, ws.config, entry?.output);
+  }
+
+  // ------------------------------------------------------------ undo/redo
+
+  private recordUndo(label: string, before: ConfigSnapshot, ws: WorkspaceState, mergeKey?: string): void {
+    this.undoStack.push({ label, before, after: snapshotOf(ws), mergeKey, at: Date.now() });
+    this.syncUndoState();
+  }
+
+  private syncUndoState(): void {
+    this.store.set({ undo: { undo: this.undoStack.nextUndo?.label, redo: this.undoStack.nextRedo?.label } });
+  }
+
+  /** Cmd+Z: restore the config files as they were before the last edit. */
+  async undo(): Promise<void> {
+    await this.stepHistory('undo');
+  }
+
+  /** Cmd+Shift+Z: re-apply the last undone edit. */
+  async redo(): Promise<void> {
+    await this.stepHistory('redo');
+  }
+
+  private async stepHistory(dir: 'undo' | 'redo'): Promise<void> {
+    const ws = this.state.workspace;
+    if (!ws) return;
+    const entry = dir === 'undo' ? this.undoStack.nextUndo : this.undoStack.nextRedo;
+    if (!entry) {
+      this.toast('info', dir === 'undo' ? '元に戻す操作はありません' : 'やり直す操作はありません', 2500);
+      return;
+    }
+    const target = dir === 'undo' ? entry.before : entry.after;
+    const done = await this.run(dir === 'undo' ? '元に戻す' : 'やり直す', async () => {
+      const kinds = changedKinds(snapshotOf(ws), target);
+      const restored = structuredClone(target);
+      for (const kind of kinds) {
+        if (kind === 'config') {
+          ws.config = restored.config;
+          await saveWorkspaceConfig(ws.fs, ws.config);
+          this.journal = new HistoryJournal(ws.fs, { hashChain: ws.config.history.hashChain });
+        } else if (kind === 'stamps') {
+          ws.stamps = restored.stamps;
+          await saveStampsConfig(ws.fs, ws.stamps);
+        } else if (kind === 'sequence') {
+          ws.sequence = restored.sequence;
+          await saveSequenceConfig(ws.fs, ws.sequence);
+        } else {
+          ws.preflight = restored.preflight;
+          await savePreflightConfig(ws.fs, ws.preflight);
+        }
+      }
+      if (dir === 'undo') this.undoStack.undo();
+      else this.undoStack.redo();
+      this.store.set({ workspace: { ...ws } });
+      this.syncUndoState();
+      if (kinds.includes('sequence')) await this.refreshSequence();
+      return true;
+    });
+    if (!done) return;
+    await this.log(dir === 'undo' ? EVENT_TYPES.undo : EVENT_TYPES.redo, { label: entry.label });
+    this.toast('info', dir === 'undo' ? `↶ 元に戻しました: ${entry.label}` : `↷ やり直しました: ${entry.label}`, 3000);
   }
 
   // ------------------------------------------------------------- history
@@ -618,6 +752,23 @@ export class AppController {
     await this.log(EVENT_TYPES.preflightRun, { file: report.file, result: report.result, report: path });
     return path;
   }
+}
+
+function snapshotOf(ws: WorkspaceState): ConfigSnapshot {
+  return structuredClone({ config: ws.config, stamps: ws.stamps, sequence: ws.sequence, preflight: ws.preflight });
+}
+
+/** Name of the stamp an edit event refers to (by definition or instance id), looked up before and after the edit. */
+function stampNameFor(before: StampsConfig, after: StampsConfig, event: Record<string, unknown>): string | undefined {
+  for (const cfg of [after, before]) {
+    const stampId =
+      typeof event.stamp === 'string' && event.stamp
+        ? event.stamp
+        : cfg.instances.find((i) => i.id === event.instance)?.stampId;
+    const name = cfg.definitions.find((d) => d.id === stampId)?.name;
+    if (name) return name;
+  }
+  return undefined;
 }
 
 export function latestJob(jobs: JobsConfig, source: string): JobRecord | undefined {

@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://miino-systems.github.io/pdf-workbench/schemas/jobs.schema.json",
+  "title": "PDF Workbench: jobs.json",
+  "description": "アプリが PDF を生成するたびに追記する処理履歴。アプリ自身が書き込むファイルであり、手で編集することは想定していない。",
+  "type": "object",
+  "required": [
+    "version",
+    "jobs"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "jobs.json のフォーマットバージョン（現在は 1）。"
+    },
+    "jobs": {
+      "type": "array",
+      "description": "生成した PDF ごとの記録。",
+      "items": {
+        "$ref": "#/$defs/JobRecord"
+      }
+    }
+  },
+  "$defs": {
+    "FontRef": {
+      "$ref": "stamps.schema.json#/$defs/FontRef"
+    },
+    "JobRecord": {
+      "type": "object",
+      "required": [
+        "id",
+        "source",
+        "sourceHash",
+        "output",
+        "stampInstances",
+        "createdAt",
+        "status"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "このジョブの識別子。"
+        },
+        "source": {
+          "type": "string",
+          "description": "workspace 相対の元ファイルパス（例: `papers/paper001.pdf`）。"
+        },
+        "sourceHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "処理時点の元ファイルの `sha256:<hex>`。"
+        },
+        "output": {
+          "type": "string",
+          "description": "workspace 相対の出力ファイルパス。"
+        },
+        "outputHash": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "生成した出力ファイルの `sha256:<hex>`。"
+        },
+        "stampInstances": {
+          "type": "array",
+          "description": "適用した StampInstance.id の一覧。stamps.json をその後変更しても、この一覧自体は書き換わらない。",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stampsHash": {
+          "type": "string",
+          "pattern": "^stamps:[0-9a-f]{16}$",
+          "description": "生成時の stamps.json の指紋（有効な配置とその定義から計算。名前・無効な配置・フォントのハッシュは含まない）。現在の stamps.json と一致しなくなると、この出力は「要更新」と表示される。"
+        },
+        "fonts": {
+          "type": "array",
+          "description": "実際に埋め込んだフォント（再現性の確認・警告用）。",
+          "items": {
+            "type": "object",
+            "required": [
+              "ref"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "ref": {
+                "$ref": "#/$defs/FontRef"
+              },
+              "sha256": {
+                "type": "string",
+                "description": "埋め込んだフォントファイルの `sha256:<hex>`。"
+              }
+            }
+          }
+        },
+        "pageStart": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "sequence.json による通しページ番号で、この出力の最初のページに振られた番号。sequence.json に含まれていなかった（除外・未対応時に生成）場合は省略される。"
+        },
+        "pageEnd": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "同じく、この出力の最後のページの番号。"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "生成日時（ISO-8601）。"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "processed",
+            "warning",
+            "error"
+          ],
+          "description": "処理結果。"
+        },
+        "message": {
+          "type": "string",
+          "description": "警告・エラーの内容など補足メッセージ。"
+        }
+      }
+    }
+  }
+}

@@ -75,6 +75,11 @@ workspace/
 `.pdf-workbench/` が無いディレクトリを選択すると「新しい Workspace として初期化」できます。
 画像・フォントの本体は JSON に埋め込まず、Workspace 内の相対パスで参照します。
 
+各 JSON ファイルの詳しいフォーマット（フィールドの意味・単位・座標系）は
+[docs/FORMAT.md](docs/FORMAT.md) を参照してください。JSON Schema
+（`public/schemas/*.schema.json`）も用意されており、アプリが書き込む
+ファイルには先頭に `$schema` が入るので、エディタで補完・検証できます。
+
 ## Git は optional
 
 Git を使わなくても全機能が動作します。Git 管理する場合の推奨対象は

@@ -11,6 +11,36 @@ import {
 import { WorkspaceFS } from './fs';
 import { normalizeSequenceConfig } from '@/sequence/normalize';
 
+/**
+ * Where the JSON Schemas for the 5 hand-editable config files are published
+ * (`public/schemas/`, served next to the app). Every file the app writes
+ * carries its `$schema` as the first key, purely for editor completion and
+ * validation; it is stripped again on load (see {@link stripSchemaKey}).
+ */
+const SCHEMA_BASE_URL = 'https://miino-systems.github.io/pdf-workbench/schemas/';
+export const WORKSPACE_SCHEMA_URL = `${SCHEMA_BASE_URL}workspace.schema.json`;
+export const STAMPS_SCHEMA_URL = `${SCHEMA_BASE_URL}stamps.schema.json`;
+export const PREFLIGHT_SCHEMA_URL = `${SCHEMA_BASE_URL}preflight.schema.json`;
+export const JOBS_SCHEMA_URL = `${SCHEMA_BASE_URL}jobs.schema.json`;
+export const SEQUENCE_SCHEMA_URL = `${SCHEMA_BASE_URL}sequence.schema.json`;
+
+/** `$schema` URL for each of the 5 config files, keyed by `WORKBENCH_FILES` path. */
+const SCHEMA_URL_BY_PATH: Record<string, string> = {
+  [WORKBENCH_FILES.workspace]: WORKSPACE_SCHEMA_URL,
+  [WORKBENCH_FILES.stamps]: STAMPS_SCHEMA_URL,
+  [WORKBENCH_FILES.preflight]: PREFLIGHT_SCHEMA_URL,
+  [WORKBENCH_FILES.jobs]: JOBS_SCHEMA_URL,
+  [WORKBENCH_FILES.sequence]: SEQUENCE_SCHEMA_URL,
+};
+
+/** Drop the editor-only `$schema` key from a parsed config file (in place), so it never reaches in-memory configs. */
+export function stripSchemaKey<T>(parsed: T): T {
+  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && '$schema' in parsed) {
+    delete (parsed as Record<string, unknown>).$schema;
+  }
+  return parsed;
+}
+
 /** In-memory view of a loaded workspace: the FS handle plus its 5 config files. */
 export interface WorkspaceState {
   fs: WorkspaceFS;
@@ -23,9 +53,15 @@ export interface WorkspaceState {
   warnings: string[];
 }
 
-/** Pretty-print JSON (2 spaces) with a trailing newline, matching the on-disk convention. */
-function toPrettyJson(data: unknown): string {
-  return `${JSON.stringify(data, null, 2)}\n`;
+/**
+ * Pretty-print JSON (2 spaces) with a trailing newline, matching the
+ * on-disk convention. For one of the 5 config files (`path`), its JSON
+ * Schema URL is written as the first key, `$schema`.
+ */
+function toPrettyJson(data: unknown, path?: string): string {
+  const schemaUrl = path ? SCHEMA_URL_BY_PATH[path] : undefined;
+  const withSchema = schemaUrl ? { $schema: schemaUrl, ...stripSchemaKey({ ...(data as Record<string, unknown>) }) } : data;
+  return `${JSON.stringify(withSchema, null, 2)}\n`;
 }
 
 /** True when this directory already holds a `.pdf-workbench/workspace.json`. */
@@ -82,11 +118,11 @@ export async function initializeWorkspace(fs: WorkspaceFS, opts?: { name?: strin
   }
 
   // Config files.
-  await fs.writeText(WORKBENCH_FILES.workspace, toPrettyJson(config));
-  await fs.writeText(WORKBENCH_FILES.stamps, toPrettyJson(stamps));
-  await fs.writeText(WORKBENCH_FILES.preflight, toPrettyJson(preflight));
-  await fs.writeText(WORKBENCH_FILES.jobs, toPrettyJson(jobs));
-  await fs.writeText(WORKBENCH_FILES.sequence, toPrettyJson(sequence));
+  await fs.writeText(WORKBENCH_FILES.workspace, toPrettyJson(config, WORKBENCH_FILES.workspace));
+  await fs.writeText(WORKBENCH_FILES.stamps, toPrettyJson(stamps, WORKBENCH_FILES.stamps));
+  await fs.writeText(WORKBENCH_FILES.preflight, toPrettyJson(preflight, WORKBENCH_FILES.preflight));
+  await fs.writeText(WORKBENCH_FILES.jobs, toPrettyJson(jobs, WORKBENCH_FILES.jobs));
+  await fs.writeText(WORKBENCH_FILES.sequence, toPrettyJson(sequence, WORKBENCH_FILES.sequence));
 
   // Append-only history log: create empty if it doesn't already exist.
   if (!(await fs.exists(WORKBENCH_FILES.events))) {
@@ -114,7 +150,7 @@ async function loadJsonFile<T>(
   }
   try {
     const text = await fs.readText(path);
-    return JSON.parse(text) as T;
+    return stripSchemaKey(JSON.parse(text) as T);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     warnings.push(`${path} could not be parsed (${message}); using defaults.`);
@@ -145,31 +181,31 @@ export async function loadWorkspace(fs: WorkspaceFS): Promise<WorkspaceState> {
 }
 
 export async function saveWorkspaceConfig(fs: WorkspaceFS, config: WorkspaceConfig): Promise<string> {
-  const text = toPrettyJson(config);
+  const text = toPrettyJson(config, WORKBENCH_FILES.workspace);
   await fs.writeText(WORKBENCH_FILES.workspace, text);
   return text;
 }
 
 export async function saveStampsConfig(fs: WorkspaceFS, stamps: StampsConfig): Promise<string> {
-  const text = toPrettyJson(stamps);
+  const text = toPrettyJson(stamps, WORKBENCH_FILES.stamps);
   await fs.writeText(WORKBENCH_FILES.stamps, text);
   return text;
 }
 
 export async function savePreflightConfig(fs: WorkspaceFS, preflight: PreflightConfig): Promise<string> {
-  const text = toPrettyJson(preflight);
+  const text = toPrettyJson(preflight, WORKBENCH_FILES.preflight);
   await fs.writeText(WORKBENCH_FILES.preflight, text);
   return text;
 }
 
 export async function saveJobsConfig(fs: WorkspaceFS, jobs: JobsConfig): Promise<string> {
-  const text = toPrettyJson(jobs);
+  const text = toPrettyJson(jobs, WORKBENCH_FILES.jobs);
   await fs.writeText(WORKBENCH_FILES.jobs, text);
   return text;
 }
 
 export async function saveSequenceConfig(fs: WorkspaceFS, sequence: SequenceConfig): Promise<string> {
-  const text = toPrettyJson(sequence);
+  const text = toPrettyJson(sequence, WORKBENCH_FILES.sequence);
   await fs.writeText(WORKBENCH_FILES.sequence, text);
   return text;
 }

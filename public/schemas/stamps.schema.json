@@ -1,0 +1,632 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://miino-systems.github.io/pdf-workbench/schemas/stamps.schema.json",
+  "title": "PDF Workbench: stamps.json",
+  "description": "スタンプの定義（StampDefinition）と、各 PDF に適用するインスタンス（StampInstance）。長さの単位はすべて pt（1mm ≈ 2.835pt）。",
+  "type": "object",
+  "required": [
+    "version",
+    "definitions",
+    "instances"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "このファイルが従う JSON Schema の URL。エディタの補完用で、アプリは読み込み時に無視する。"
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "stamps.json のフォーマットバージョン（現在は 1）。"
+    },
+    "definitions": {
+      "type": "array",
+      "description": "スタンプの雛形（見た目・既定の位置/対象ページ）の一覧。",
+      "items": {
+        "$ref": "#/$defs/StampDefinition"
+      }
+    },
+    "instances": {
+      "type": "array",
+      "description": "実際に PDF へ適用するスタンプの一覧。各要素が definitions のいずれか 1 件を参照する。",
+      "items": {
+        "$ref": "#/$defs/StampInstance"
+      }
+    }
+  },
+  "$defs": {
+    "StampAnchor": {
+      "type": "string",
+      "description": "スタンプの基準となるページ上の位置（縦位置-横位置）。offsetX/offsetY はこの基準辺からスタンプの箱（bounding box）の対応する辺までの内向きの距離。",
+      "enum": [
+        "top-left",
+        "top-center",
+        "top-right",
+        "middle-left",
+        "middle-center",
+        "middle-right",
+        "bottom-left",
+        "bottom-center",
+        "bottom-right"
+      ]
+    },
+    "StampPosition": {
+      "type": "object",
+      "description": "ページ上の配置。offsetX/offsetY は pt 単位で、anchor の辺からスタンプの箱の対応する辺までの内向きの距離（center/middle は箱の中心の移動量、x は右方向、y は上方向）。",
+      "required": [
+        "anchor",
+        "offsetX",
+        "offsetY"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/StampAnchor"
+        },
+        "offsetX": {
+          "type": "number",
+          "description": "水平方向のオフセット（pt）。left は右向き、right は左向き、center は右向きが正。"
+        },
+        "offsetY": {
+          "type": "number",
+          "description": "垂直方向のオフセット（pt）。bottom は上向き、top は下向き、middle は上向きが正。"
+        }
+      }
+    },
+    "PageSelector": {
+      "description": "スタンプ（または sequence の各種指定）を適用するページの集合。ページ番号は 1 始まり。",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "all",
+              "description": "全ページ。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "first",
+              "description": "先頭ページのみ。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "last",
+              "description": "最終ページのみ。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "odd",
+              "description": "奇数ページ（1, 3, 5, ...）。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "even",
+              "description": "偶数ページ（2, 4, 6, ...）。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "from",
+            "to"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "range"
+            },
+            "from": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "範囲の開始ページ（from > to でも入れ替えて解釈される）。"
+            },
+            "to": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "範囲の終了ページ。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "pages"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "list"
+            },
+            "pages": {
+              "type": "array",
+              "description": "個別に列挙するページ番号。",
+              "items": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "StandardFontName": {
+      "type": "string",
+      "description": "pdf-lib 組み込みの標準14書体名（WinAnsi のみで CJK 不可）。",
+      "enum": [
+        "Helvetica",
+        "Helvetica-Bold",
+        "Helvetica-Oblique",
+        "Times-Roman",
+        "Times-Bold",
+        "Times-Italic",
+        "Courier",
+        "Courier-Bold"
+      ]
+    },
+    "FontRef": {
+      "description": "フォントの参照。kind によって形が変わる。",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "standard",
+              "description": "pdf-lib の標準フォント（埋め込み不要、CJK 不可）。"
+            },
+            "name": {
+              "$ref": "#/$defs/StandardFontName"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "family",
+            "postscriptName"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "local",
+              "description": "Local Font Access API (window.queryLocalFonts) で選んだ端末ローカルのフォント。"
+            },
+            "family": {
+              "type": "string",
+              "description": "フォントファミリー名。"
+            },
+            "postscriptName": {
+              "type": "string",
+              "description": "PostScript 名（同一ファミリー内の書体を一意に識別）。"
+            },
+            "fullName": {
+              "type": "string",
+              "description": "フォントのフルネーム。"
+            },
+            "style": {
+              "type": "string",
+              "description": "スタイル名（Regular / Bold など）。"
+            },
+            "sha256": {
+              "type": "string",
+              "description": "最後に使用したフォントファイルの `sha256:<hex>`。バイト内容が変わった同名フォントの検出用。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "workspace",
+              "description": "workspace の fonts/ 以下に置かれたフォントファイル。"
+            },
+            "path": {
+              "type": "string",
+              "description": "workspace 相対パス（例: `fonts/NotoSansJP-Regular.ttf`）。"
+            },
+            "family": {
+              "type": "string",
+              "description": "フォントファミリー名（表示用）。"
+            },
+            "sha256": {
+              "type": "string",
+              "description": "最後に使用したフォントファイルの `sha256:<hex>`。"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "file",
+              "description": "ユーザーがその場で選択したフォントファイル（バイト列はメモリ上のみで保持され、stamps.json には保存されない）。"
+            },
+            "name": {
+              "type": "string",
+              "description": "ファイル名。"
+            },
+            "family": {
+              "type": "string",
+              "description": "フォントファミリー名（表示用）。"
+            },
+            "sha256": {
+              "type": "string",
+              "description": "最後に使用したフォントファイルの `sha256:<hex>`。"
+            }
+          }
+        }
+      ]
+    },
+    "TextAlign": {
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ],
+      "description": "複数行テキストのブロック内での行の水平揃え（既定 left）。ブロック自体の位置は anchor で決まる。"
+    },
+    "StampLayerBase": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "レイヤーの識別子（同一 StampDefinition 内で一意）。"
+        },
+        "dx": {
+          "type": "number",
+          "description": "スタンプ原点（layout 未設定時は各レイヤー共通の原点＝箱の左下）からの水平方向の追加オフセット（pt）。layout 設定時はその配置結果へのさらなる補正として加算される。"
+        },
+        "dy": {
+          "type": "number",
+          "description": "スタンプ原点からの垂直方向の追加オフセット（pt）。"
+        },
+        "opacity": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "不透明度（0〜1）。省略時は不透明。"
+        },
+        "rotate": {
+          "type": "number",
+          "description": "反時計回りの回転角（度）。省略時は 0。"
+        }
+      }
+    },
+    "TextLayer": {
+      "description": "テキストレイヤー。`\\n` で改行し、複数行になる。",
+      "allOf": [
+        {
+          "$ref": "#/$defs/StampLayerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "type",
+            "text",
+            "font",
+            "size",
+            "color"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": true,
+            "dx": true,
+            "dy": true,
+            "opacity": true,
+            "rotate": true,
+            "type": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string",
+              "description": "描画する文字列。`\\n` を含むと複数行になる。"
+            },
+            "font": {
+              "$ref": "#/$defs/FontRef"
+            },
+            "size": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "フォントサイズ（pt）。"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "description": "CSS 16進カラー（例: `#000000`）。"
+            },
+            "align": {
+              "$ref": "#/$defs/TextAlign"
+            },
+            "lineHeight": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "行送り（ベースライン間隔）。size に対する倍率で、既定は 1.2。"
+            }
+          }
+        }
+      ]
+    },
+    "ImageLayer": {
+      "description": "画像レイヤー（PNG または JPEG）。",
+      "allOf": [
+        {
+          "$ref": "#/$defs/StampLayerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "type",
+            "src"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": true,
+            "dx": true,
+            "dy": true,
+            "opacity": true,
+            "rotate": true,
+            "type": {
+              "const": "image"
+            },
+            "src": {
+              "type": "string",
+              "description": "workspace 相対パス（例: `assets/cc-by.png`）。PNG または JPEG。"
+            },
+            "width": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "表示幅（pt）。height のみ指定時はアスペクト比を保って算出。両方省略時は画像のピクセル数をそのまま pt として使用（1px = 1pt）。"
+            },
+            "height": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "表示高さ（pt）。width のみ指定時はアスペクト比を保って算出。両方指定すると比率を無視して引き伸ばされ、元画像と縦横比が 2% 以上異なる場合はアプリが警告する。"
+            }
+          }
+        }
+      ]
+    },
+    "PageNumberLayer": {
+      "description": "ページ番号レイヤー。template 内の `{page}` `{pages}` `{file}` が置換される（例: `{page} / {pages}`）。",
+      "allOf": [
+        {
+          "$ref": "#/$defs/StampLayerBase"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "type",
+            "template",
+            "font",
+            "size",
+            "color"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": true,
+            "dx": true,
+            "dy": true,
+            "opacity": true,
+            "rotate": true,
+            "type": {
+              "const": "pageNumber"
+            },
+            "template": {
+              "type": "string",
+              "description": "`{page}`（現在ページ番号）/ `{pages}`（総ページ数）/ `{file}`（元ファイル名）を含められるテンプレート文字列。"
+            },
+            "font": {
+              "$ref": "#/$defs/FontRef"
+            },
+            "size": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "フォントサイズ（pt）。"
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$",
+              "description": "CSS 16進カラー。"
+            },
+            "startAt": {
+              "type": "integer",
+              "description": "このスタンプが対象とする最初のページに表示する番号（既定 1）。sequence.json による通しページ番号が使われる場合は無視される。"
+            },
+            "totalPagesOverride": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "指定すると `{pages}` にこの値を使う（文書全体のページ数の代わり）。"
+            },
+            "align": {
+              "$ref": "#/$defs/TextAlign"
+            },
+            "lineHeight": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "description": "行送り（size に対する倍率、既定 1.2）。template が複数行になる場合に使う。"
+            }
+          }
+        }
+      ]
+    },
+    "StampLayer": {
+      "description": "スタンプを構成する 1 枚のレイヤー。type によって形が変わる。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextLayer"
+        },
+        {
+          "$ref": "#/$defs/ImageLayer"
+        },
+        {
+          "$ref": "#/$defs/PageNumberLayer"
+        }
+      ]
+    },
+    "StampLayout": {
+      "type": "object",
+      "description": "layers を自動的に横並び/縦並びに配置する（省略時は全レイヤーが同じ原点に重なり、各レイヤーの dx/dy だけずれる）。row は左→右、column は上→下の順に layers 配列の順で並べる。",
+      "required": [
+        "direction"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "type": "string",
+          "enum": [
+            "row",
+            "column"
+          ],
+          "description": "並べる方向。row=左から右、column=上から下。"
+        },
+        "gap": {
+          "type": "number",
+          "description": "隣り合うレイヤー間の間隔（pt）。既定 0。"
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "start",
+            "center",
+            "end"
+          ],
+          "description": "direction と直交する軸での揃え方（既定 center）。row では start=上揃え・end=下揃え、column では start=左揃え・end=右揃え。"
+        }
+      }
+    },
+    "StampDefinition": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "layers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "スタンプ定義の識別子（stamps.json 内で一意）。"
+        },
+        "name": {
+          "type": "string",
+          "description": "表示名。"
+        },
+        "description": {
+          "type": "string",
+          "description": "用途などの説明（任意）。"
+        },
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "description": "このスタンプを構成するレイヤーの配列（描画順、layout ありのときは配置順にもなる）。",
+          "items": {
+            "$ref": "#/$defs/StampLayer"
+          }
+        },
+        "defaultPosition": {
+          "$ref": "#/$defs/StampPosition"
+        },
+        "defaultPages": {
+          "$ref": "#/$defs/PageSelector"
+        },
+        "layout": {
+          "$ref": "#/$defs/StampLayout"
+        }
+      }
+    },
+    "StampInstance": {
+      "type": "object",
+      "description": "definitions の 1 件を実際に PDF へ適用する設定。",
+      "required": [
+        "id",
+        "stampId",
+        "enabled",
+        "pages"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "インスタンスの識別子（stamps.json 内で一意）。"
+        },
+        "stampId": {
+          "type": "string",
+          "description": "参照する StampDefinition.id。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "false の場合はこのインスタンスを適用しない。"
+        },
+        "pages": {
+          "$ref": "#/$defs/PageSelector"
+        },
+        "position": {
+          "description": "StampDefinition.defaultPosition を上書きする位置。PDF プレビューでドラッグすると自動的にここへ書き込まれる（Stamps タブでは「📌 独自の位置」と表示され、「既定位置に戻す」で削除できる）。",
+          "allOf": [
+            {
+              "$ref": "#/$defs/StampPosition"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

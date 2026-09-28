@@ -158,7 +158,7 @@ describe('runPreflight: fonts', () => {
     const note = notes.find((n) => n.includes('/Text'))!;
     const hex = /\/Contents <([0-9A-F]+)>/i.exec(note)![1];
     const text = new TextDecoder('utf-16be').decode(Uint8Array.from(hex.match(/../g)!.map((b) => parseInt(b, 16))));
-    expect(text).toContain('埋め込まれていないフォントがあります: Helvetica');
+    expect(text).toContain('• A font is not embedded. (Helvetica)');
   });
 
   it('reads embedding from the font dictionaries (pdf.js substitutes standard fonts and calls them loaded)', async () => {

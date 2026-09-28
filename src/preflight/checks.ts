@@ -99,7 +99,7 @@ export function mergeFindings(findings: PreflightFinding[]): PreflightFinding[] 
     const flush = (): void => {
       if (!block) return;
       const { first, lines, rect } = block;
-      out.push({ ...first, rect, text: lines > 1 && first.text ? `${first.text} … ほか ${lines - 1} 行` : first.text });
+      out.push({ ...first, rect, text: lines > 1 && first.text ? `${first.text} … (+${lines - 1} lines)` : first.text });
     };
     for (const f of sorted) {
       const r = f.rect!;

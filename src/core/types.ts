@@ -498,6 +498,12 @@ export interface PreflightConfig {
    * `skipped` in the summary and get no annotated copy.
    */
   skipFiles?: string[];
+  /**
+   * Comments of the annotated review copy, by code (e.g. `TOP_MARGIN`,
+   * `TEXT_FORBIDDEN:<rule id>`, `TEXT_FORBIDDEN` for every such rule, or
+   * `PHANTOM`), replacing the English defaults. Empty = default.
+   */
+  annotationMessages?: Record<string, string>;
   checks?: {
     /** Object-based (getTextContent) margin check. */
     marginText?: boolean;

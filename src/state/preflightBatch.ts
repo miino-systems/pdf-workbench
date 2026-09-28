@@ -2,8 +2,8 @@
  * "全 PDF を一括検査": run preflight on every source PDF, save each report,
  * and write an annotated review copy of every PDF with problems into the
  * preflight folder (default `preflight/`), plus `summary.csv` / `summary.json`
- * listing all files. Copies of files that now pass are removed, so the
- * folder always holds exactly the PDFs that still need attention.
+ * listing all files. The folder is emptied first, so afterwards it holds
+ * exactly the PDFs that still need attention.
  *
  * Rendering pages (for the raster margin and stamp-collision checks) needs
  * a canvas, so the UI passes a `rasterize` function; without one only the
@@ -57,6 +57,10 @@ export interface PreflightBatchItem {
 }
 
 export interface PreflightBatchResult {
+  /** Stopped before every file was checked: the summary lists only the files checked so far. */
+  cancelled?: boolean;
+  /** Number of files the run was started for. */
+  total?: number;
   dir: string;
   ranAt: string;
   configId: string;
@@ -91,6 +95,8 @@ function textInkRect(t: PageTextBox): Rect {
 
 export interface PreflightOneOptions {
   rasterize?: Rasterizer;
+  /** Stops between pages (throws an `AbortError`). */
+  signal?: AbortSignal;
   now?: Date;
   /** Shared across a batch so fonts/images are loaded once. */
   metrics?: StampMetrics;
@@ -126,6 +132,7 @@ export async function preflightOne(
   const pageStart = sequenceItemFor(ctrl.state.sequence, file)?.pageStart;
 
   for await (const { page, pageSize, image } of opts.rasterize(bytes)) {
+    opts.signal?.throwIfAborted();
     const found: PreflightFinding[] = [];
     if (config.checks?.marginRaster && config.margins) {
       const m = marginsForPage(config.margins, config.marginOverrides, page, report.pageCount);
@@ -178,7 +185,7 @@ function csvCell(v: string | number | undefined): string {
 
 export async function runPreflightBatch(
   ctrl: AppController,
-  opts: { rasterize?: Rasterizer; onProgress?: (done: number, total: number) => void } = {},
+  opts: { rasterize?: Rasterizer; onProgress?: (done: number, total: number) => void; signal?: AbortSignal } = {},
 ): Promise<PreflightBatchResult> {
   const ws = ctrl.requireWorkspace();
   const config = ws.preflight;
@@ -186,17 +193,22 @@ export async function runPreflightBatch(
   const files = ctrl.state.files.map((f) => f.path);
   const items: PreflightBatchItem[] = [];
   const ranAt = new Date();
-  await ws.fs.mkdirp(dir);
+  await ctrl.clearGeneratedDir(dir);
 
   const metrics = newStampMetrics(ctrl);
 
+  let cancelled = false;
   for (const [i, file] of files.entries()) {
     opts.onProgress?.(i, files.length);
+    if (opts.signal?.aborted) {
+      cancelled = true;
+      break;
+    }
     const stem = stripExtension(basename(file));
     const annotatedPath = `${dir}/${stem}_preflight.pdf`;
     try {
       const bytes = await ws.fs.readBytes(file);
-      const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics });
+      const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics, signal: opts.signal });
 
       const reportPath = `${WORKBENCH_FILES.reportsDir}/${reportFileName(file, ranAt)}`;
       await ws.fs.writeText(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -204,20 +216,23 @@ export async function runPreflightBatch(
       if (report.result !== 'ok') {
         await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, config));
         item.annotated = annotatedPath;
-      } else if (await ws.fs.exists(annotatedPath)) {
-        await ws.fs.remove(annotatedPath);
       }
       items.push(item);
     } catch (e) {
+      if (opts.signal?.aborted) {
+        // Stopped mid-file: that file is neither reported nor annotated.
+        cancelled = true;
+        break;
+      }
       console.error('preflight failed', file, e);
       items.push({ file, result: 'failed', summary: `検査できませんでした: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
-  opts.onProgress?.(files.length, files.length);
+  if (!cancelled) opts.onProgress?.(files.length, files.length);
 
   const counts = { ok: 0, warning: 0, error: 0, failed: 0 };
   for (const it of items) counts[it.result === 'failed' ? 'failed' : it.result] += 1;
-  const result: PreflightBatchResult = { dir, ranAt: formatTs(ranAt), configId: config.id, items, counts };
+  const result: PreflightBatchResult = { dir, ranAt: formatTs(ranAt), configId: config.id, items, counts, total: files.length, cancelled };
 
   const header = 'file,result,pages,problems,annotated';
   const rows = items.map((it) =>
@@ -225,7 +240,7 @@ export async function runPreflightBatch(
   );
   await ws.fs.writeText(`${dir}/summary.csv`, `\uFEFF${[header, ...rows].join('\n')}\n`);
   await ws.fs.writeText(`${dir}/summary.json`, `${JSON.stringify(result, null, 2)}\n`);
-  await ctrl.log(EVENT_TYPES.preflightBatch, { dir, files: items.length, ...counts });
+  await ctrl.log(EVENT_TYPES.preflightBatch, { dir, files: items.length, total: files.length, ...(cancelled ? { cancelled } : {}), ...counts });
   return result;
 }
 

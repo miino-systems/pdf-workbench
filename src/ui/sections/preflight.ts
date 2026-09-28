@@ -253,6 +253,8 @@ export const preflightSection: Section = {
     const resultBox = h('div', null);
     const batchButton = button('全 PDF を一括検査', () => void runBatch(), 'btn btn-primary');
     const batchBox = h('div', null);
+    const batchCancelButton = button('中止', () => ctrl.cancelRunning(), 'btn', 'x');
+    batchCancelButton.title = '検査中のファイルが終わったところで止めます（Esc）';
     const runPanel = h(
       'div',
       { class: 'panel' },
@@ -260,9 +262,9 @@ export const preflightSection: Section = {
       h(
         'p',
         { class: 'muted settings-note' },
-        '全 PDF を検査し，問題のあった PDF には問題箇所に赤枠と注釈（コメント）を付けたコピーを保存します（元 PDF は変更しません）．',
+        '全 PDF を検査し，問題のあった PDF には問題箇所に赤枠と注釈（コメント）を付けたコピーを保存します（元 PDF は変更しません）．実行のたびに保存先フォルダの中身はいったん全て削除されます．',
       ),
-      h('div', { class: 'row' }, batchButton),
+      h('div', { class: 'row' }, batchButton, batchCancelButton),
       batchBox,
       h('h3', null, '1 件だけ検査'),
       h('div', { class: 'row' }, runButton),
@@ -289,19 +291,29 @@ export const preflightSection: Section = {
       const ws = ctrl.state.workspace;
       if (!ws || ctrl.state.files.length === 0) return;
       saveNowRef.save();
+      const dir = preflightDir(ctrl);
+      const existing = await ctrl.countFilesIn(dir);
+      if (
+        existing > 0 &&
+        !confirm(`全 ${ctrl.state.files.length} 件を検査し直します．${dir}/ 内の既存のファイル（${existing} 件：注釈付きコピーと summary）はすべて削除されます．よろしいですか？`)
+      ) {
+        return;
+      }
       const label = 'Preflight 一括検査';
-      const res = await ctrl.run(label, async () => {
-        try {
-          return await runPreflightBatch(ctrl, {
-            rasterize: rasterizePages,
-            onProgress: (done, total) => ctrl.setProgress({ label, done, total }),
-          });
-        } finally {
-          ctrl.setProgress(undefined);
-        }
-      });
+      const res = await ctrl.runCancellable(label, (signal) =>
+        runPreflightBatch(ctrl, {
+          rasterize: rasterizePages,
+          signal,
+          onProgress: (done, total) => ctrl.setProgress({ label, done, total }),
+        }),
+      );
       if (!res) return;
       batch = res;
+      if (res.cancelled) {
+        renderBatch(ctrl.state);
+        ctrl.toast('info', `一括検査を中止しました（${res.items.length}/${res.total} 件を検査済み．結果は ${res.dir}/ にあります）`, 10000);
+        return;
+      }
       renderBatch(ctrl.state);
       const { ok, warning, error, failed } = res.counts;
       ctrl.toast(
@@ -314,6 +326,9 @@ export const preflightSection: Section = {
     function renderBatch(state: AppState): void {
       const ws = state.workspace;
       batchButton.disabled = !ws || state.files.length === 0 || !!state.busy;
+      batchCancelButton.hidden = !state.cancel;
+      batchCancelButton.disabled = !!state.cancel?.cancelling;
+      batchCancelButton.lastChild!.textContent = state.cancel?.cancelling ? '中止しています…' : '中止';
       batchButton.textContent = `全 PDF を一括検査（${state.files.length} 件）`;
       if (!ws) return;
       if (batchWs !== ws.fs) {
@@ -343,6 +358,7 @@ export const preflightSection: Section = {
           h('span', { class: 'badge err' }, `エラー ${error}`),
           failed ? h('span', { class: 'badge err' }, `検査失敗 ${failed}`) : '',
           h('span', { class: 'muted' }, `${batch.ranAt}（${batch.dir}/summary.csv）`),
+          batch.cancelled ? h('span', { class: 'badge warn' }, `中止（${batch.items.length}/${batch.total ?? '?'} 件）`) : '',
         ),
         problems.length
           ? h(

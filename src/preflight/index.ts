@@ -6,7 +6,7 @@
 export {
   runPreflight,
   marginsForPage,
-  marginTolerancePt,
+  marginTolerancesPt,
   mergeFindings,
   DEFAULT_MARGIN_TOLERANCE_PT,
   MAX_FINDINGS_PER_CODE,

@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type {
   PageSize,
+  MarginTolerance,
   PreflightConfig,
   PreflightFinding,
   PreflightMargins,
@@ -22,10 +23,15 @@ export const DEFAULT_MARGIN_TOLERANCE_PT = 2;
 /** At most this many located findings are kept per problem code on a page (the codes still count every hit). */
 export const MAX_FINDINGS_PER_CODE = 15;
 
-/** How far past a margin line content may reach before it is reported (pt). */
-export function marginTolerancePt(margins: PreflightMargins): number {
+/** How far past each margin line content may reach before it is reported (pt), with defaults filled in. */
+export function marginTolerancesPt(margins: PreflightMargins): Required<MarginTolerance> {
   const t = margins.tolerance;
-  return t !== undefined && Number.isFinite(t) && t >= 0 ? t : DEFAULT_MARGIN_TOLERANCE_PT;
+  const valid = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : DEFAULT_MARGIN_TOLERANCE_PT);
+  if (typeof t === 'number' || t === undefined) {
+    const all = valid(t);
+    return { top: all, bottom: all, left: all, right: all };
+  }
+  return { top: valid(t.top), bottom: valid(t.bottom), left: valid(t.left), right: valid(t.right) };
 }
 
 /** A text run in the page's visible frame (`y` = baseline). */
@@ -170,11 +176,11 @@ function marginFindingsForItems(
 ): { codes: PreflightWarningCode[]; findings: PreflightFinding[] } {
   // A margin line moved outward by the tolerance: text touching the line
   // (justified columns, a last baseline sitting on it) is not a violation.
-  const tol = marginTolerancePt(margins);
-  const topPt = toPt(margins.top, margins.unit) - tol;
-  const bottomPt = toPt(margins.bottom, margins.unit) - tol;
-  const leftPt = toPt(margins.left, margins.unit) - tol;
-  const rightPt = toPt(margins.right, margins.unit) - tol;
+  const tol = marginTolerancesPt(margins);
+  const topPt = toPt(margins.top, margins.unit) - tol.top;
+  const bottomPt = toPt(margins.bottom, margins.unit) - tol.bottom;
+  const leftPt = toPt(margins.left, margins.unit) - tol.left;
+  const rightPt = toPt(margins.right, margins.unit) - tol.right;
 
   const codes = new Set<PreflightWarningCode>();
   const findings: PreflightFinding[] = [];

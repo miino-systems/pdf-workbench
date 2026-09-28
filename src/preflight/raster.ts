@@ -161,8 +161,8 @@ function inkBounds(
 }
 
 export interface MarginInkOptions extends RasterCheckOptions {
-  /** Ink up to this far (pt) past a margin line is allowed. Default 0. */
-  tolerance?: number;
+  /** Ink up to this far (pt) past a margin line is allowed: one value, or per side. Default 0. */
+  tolerance?: number | MarginsPt;
   /** Areas (PDF visible space, pt) whose ink is not counted, e.g. text already checked by the text margin check. */
   ignore?: Rect[];
 }
@@ -180,13 +180,16 @@ export function findMarginInkByRaster(
 ): PreflightFinding[] {
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
   const minPixels = opts.minPixels ?? DEFAULT_MIN_PIXELS;
-  const tol = Math.max(0, opts.tolerance ?? 0);
+  const t = opts.tolerance ?? 0;
+  const tol: MarginsPt = typeof t === 'number' ? { top: t, bottom: t, left: t, right: t } : t;
   const sx = imageData.width / pageSize.width;
   const sy = imageData.height / pageSize.height;
   const w = imageData.width;
   const hgt = imageData.height;
-  // Each band ends `tol` short of its margin line.
-  const [top, bottom, left, right] = [margins.top, margins.bottom, margins.left, margins.right].map((m) => Math.max(0, m - tol));
+  // Each band ends its side's tolerance short of its margin line.
+  const [top, bottom, left, right] = (['top', 'bottom', 'left', 'right'] as const).map((side) =>
+    Math.max(0, margins[side] - Math.max(0, tol[side])),
+  );
   const bands: [PreflightWarningCode, number, number, number, number][] = [
     ['TOP_MARGIN', 0, 0, w, top * sy],
     ['BOTTOM_MARGIN', 0, hgt - bottom * sy, w, hgt],

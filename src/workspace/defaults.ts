@@ -35,7 +35,13 @@ export function createDefaultStampsConfig(): StampsConfig {
 
 /**
  * Build a fresh `PreflightConfig`: A4 portrait, 20/20/18/18 mm margins
- * (top/bottom/left/right), all checks disabled.
+ * (top/bottom/left/right), all checks enabled.
+ *
+ * All three checks (text-based margins, raster-based margins, stamp
+ * collision) default to *on*: a fresh workspace should be able to tell the
+ * user their header doesn't fit in the margin without them first having to
+ * discover and flip a checkbox. Users who find a check too slow or noisy for
+ * their workflow can still disable it in the Preflight tab.
  */
 export function createDefaultPreflightConfig(): PreflightConfig {
   return {
@@ -56,9 +62,9 @@ export function createDefaultPreflightConfig(): PreflightConfig {
     },
     pages: {},
     checks: {
-      marginText: false,
-      marginRaster: false,
-      stampCollision: false,
+      marginText: true,
+      marginRaster: true,
+      stampCollision: true,
     },
   };
 }

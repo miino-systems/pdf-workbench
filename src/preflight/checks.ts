@@ -3,6 +3,7 @@ import type {
   PageSize,
   PreflightConfig,
   PreflightMargins,
+  PreflightMarginOverride,
   PreflightPageResult,
   PreflightReport,
   PreflightSeverity,
@@ -11,6 +12,7 @@ import type {
 import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { destroyPdfDocument, loadPdfDocument } from '@/pdf/reader/document';
 import { getPageTextItems } from '@/pdf/reader/text';
+import { resolvePages } from '@/stamps/pages';
 
 export interface PreflightContext {
   /** Workspace-relative source path, stored verbatim into the report. */
@@ -40,6 +42,26 @@ function matchesPaperSize(
   const rotated =
     Math.abs(size.width - target.height) <= tolerance && Math.abs(size.height - target.width) <= tolerance;
   return straight || rotated;
+}
+
+/**
+ * Resolve the effective margins for one page: `base` with any matching
+ * `PreflightMarginOverride.margins` side applied on top (later entries in
+ * `overrides` win when several match the same page).
+ */
+export function marginsForPage(
+  base: PreflightMargins,
+  overrides: PreflightMarginOverride[] | undefined,
+  pageNumber: number,
+  pageCount: number,
+): PreflightMargins {
+  if (!overrides || overrides.length === 0) return base;
+  let effective = base;
+  for (const override of overrides) {
+    if (!resolvePages(override.pages, pageCount).includes(pageNumber)) continue;
+    effective = { ...effective, ...override.margins };
+  }
+  return effective;
 }
 
 type Orientation = 'portrait' | 'landscape' | 'square';
@@ -133,7 +155,8 @@ export async function runPreflight(
       let warnings: PreflightWarningCode[] = [];
       if (marginTextEnabled && config.margins) {
         const items = await getPageTextItems(doc, pageNumber);
-        warnings = marginCodesForItems(items, size, config.margins);
+        const margins = marginsForPage(config.margins, config.marginOverrides, pageNumber, pageCount);
+        warnings = marginCodesForItems(items, size, margins);
       }
 
       pages.push({

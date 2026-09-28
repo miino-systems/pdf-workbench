@@ -6,9 +6,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import fontkit from '@pdf-lib/fontkit';
-import { PDFDocument, PDFName, StandardFonts } from 'pdf-lib';
+import { PDFDocument, PDFName, StandardFonts, degrees } from 'pdf-lib';
 import type { PreflightConfig } from '@/core/types';
-import { findTextOverlaps, runPreflight } from '@/preflight';
+import { findTextOverlaps, runPreflight, type PageTextBox } from '@/preflight';
 import { readFontEmbedding } from '@/pdf/reader/fonts';
 import { buildFixturePdf } from './helpers/pdf-fixtures';
 
@@ -41,6 +41,55 @@ describe('findTextOverlaps', () => {
         run('Bold', 50.4, 30, 30), // faked bold
       ]),
     ).toEqual([]);
+  });
+
+  it('leaves superscripts, subscripts and tick labels over an axis title alone', () => {
+    expect(
+      findTextOverlaps([
+        run('W s(t)]', 100, 100, 40, 10),
+        run('in', 108, 104, 6, 7), // W^in: raised 4 pt
+        run('dyn', 120, 200, 10, 9), // W_ij^dyn: stacked, 3 pt apart
+        run('ij', 120, 197, 6, 9),
+        run('10', 100, 300, 10, 14), // tick label …
+        run('Perturbation strength', 80, 295, 100, 14), // … over the axis title, 5 pt lower
+      ]),
+    ).toEqual([]);
+  });
+
+  it('compares rotated text in its own direction only', () => {
+    const vertical = (str: string, x: number, y: number, length: number) => ({
+      ...run(str, x - 10, y, 10, length), // the box around it
+      run: { x, y, angle: Math.PI / 2, length, size: 10 },
+    });
+    // A vertical axis label crossing horizontal tick labels: not a clash.
+    expect(findTextOverlaps([vertical('from perturbed initial solutions', 60, 100, 150), run('C104', 45, 120, 25)])).toEqual([]);
+    // Two vertical runs on the same baseline, drawn over each other: a clash.
+    const found = findTextOverlaps([vertical('Average number', 60, 100, 80), vertical('of selections', 60, 150, 70)]);
+    expect(found).toHaveLength(1);
+    expect(found[0].text).toBe('Average number / of selections');
+  });
+});
+
+describe('runPreflight: rotated text', () => {
+  it('boxes a vertical label by its real extent and does not report it over horizontal text', async () => {
+    const doc = await PDFDocument.create();
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    const page = doc.addPage(A4);
+    page.drawText('Average number of selections', { x: 100, y: 300, size: 10, font, rotate: degrees(90) });
+    page.drawText('C104 C204 R104', { x: 80, y: 340, size: 10, font });
+    let items: PageTextBox[] = [];
+    const report = await runPreflight(
+      await doc.save(),
+      { ...config({ textOverlap: true, marginText: true }), margins: { top: 10, bottom: 10, left: 10, right: 10, unit: 'mm' } },
+      { file: 'a.pdf', sha256: 'x', onPageText: (_, found) => (items = found) },
+    );
+    expect(report.result).toBe('ok');
+    const label = items.find((t) => t.str.startsWith('Average'))!;
+    expect(label.x).toBeCloseTo(90, 0); // extends 10 pt to the left of its baseline
+    expect(label.width).toBeCloseTo(10, 0);
+    expect(label.height).toBeGreaterThan(100);
+    expect(label.run?.angle).toBeCloseTo(Math.PI / 2);
+    expect(items.find((t) => t.str.startsWith('C104'))!.run).toBeUndefined();
   });
 });
 

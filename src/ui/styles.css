@@ -105,7 +105,19 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
 .grid-3 { grid-template-columns: 320px 1fr 320px; }
 .grid-sidebar { grid-template-columns: 340px 1fr; }
-@media (max-width: 1000px) { .grid-2, .grid-3, .grid-sidebar { grid-template-columns: 1fr; } }
+/* Two columns with a draggable divider (components/splitGrid.ts): left, a 0-width handle column, right. */
+.grid-split { grid-template-columns: var(--split-cols, minmax(0, 1fr) 0px minmax(0, 1fr)); column-gap: 8px; }
+.split-handle { position: relative; z-index: 1; }
+.split-handle::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -5px; width: 10px;
+  cursor: col-resize; border-radius: 4px;
+}
+.split-handle:hover::before, .grid-split.splitting .split-handle::before { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.grid-split.splitting { cursor: col-resize; user-select: none; }
+@media (max-width: 1000px) {
+  .grid-2, .grid-3, .grid-sidebar, .grid-split { grid-template-columns: 1fr; }
+  .split-handle { display: none; }
+}
 
 .panel {
   background: var(--panel);
@@ -323,11 +335,41 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .file-list li.file-group.update { color: var(--accent); }
 .file-list li .output-name { margin-left: 8px; color: var(--muted); font-size: 12px; }
 .file-list li.needs-update { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-.skip-chip {
-  font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
-  border-radius: 999px; padding: 0 7px; white-space: nowrap;
-}
 .update-chip {
   font-size: 10.5px; font-weight: 600; color: var(--accent-text); background: var(--accent);
   border-radius: 999px; padding: 0 7px; white-space: nowrap;
+}
+
+/* Preflight tab: "ルールと実行" / "検査結果" views */
+.subtab-host { display: flex; flex-direction: column; gap: 12px; }
+.subtab-host.fill { height: 100%; min-height: 0; }
+.subtab-host.fill > .subtab-view { flex: 1 1 auto; min-height: 0; }
+.subtabs button { font-size: 13px; }
+.results-panel, .results-preview { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.results-panel > h2, .results-preview > h2 { margin-bottom: 0; }
+.results-panel > :not(.results-list), .results-preview > :not(.results-pages) { flex-shrink: 0; }
+.results-kinds { gap: 12px; flex-wrap: wrap; }
+.results-code-head { gap: 8px; }
+.results-code-head > .muted:last-child { margin-left: auto; }
+.results-codes { display: flex; flex-wrap: wrap; gap: 4px; max-height: 18vh; overflow-y: auto; }
+.code-chip {
+  font: inherit; font-size: 12px; font-family: var(--mono); padding: 1px 8px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 999px; background: transparent; color: var(--text);
+}
+.code-chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.code-chip.active .muted { color: inherit; opacity: .8; }
+.results-list { flex: 1 1 auto; min-height: 120px; overflow-y: auto; outline: none; }
+.results-list li { gap: 10px; padding: 4px 8px; }
+.results-list li > .badge { flex: 0 0 4.5em; text-align: center; padding: 1px 0; }
+.results-list li > .name { flex: 0 1 14em; }
+.results-list li > .summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.results-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results-source { font-size: 12px; }
+.results-problems { font-size: 13px; }
+.results-pages { flex: 1 1 auto; min-height: 0; max-height: none; }
+.results-page { margin-bottom: 12px; }
+@media (max-width: 1000px) {
+  .subtab-host.fill { height: auto; }
+  .results-list { max-height: 50vh; }
+  .results-pages { max-height: 80vh; }
 }

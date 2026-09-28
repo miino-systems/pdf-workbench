@@ -17,14 +17,9 @@ import type { AppController, AppState } from '@/state/app';
 import { isPreflightSkipped, loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { basename } from '@/workspace';
+import { splitGrid } from '../components/splitGrid';
+import { createResultsView } from './preflightResults';
 import { button, h, replaceChildren } from '../dom';
-
-const BATCH_BADGE: Record<Exclude<PreflightBatchResult['items'][number]['result'], 'ok'>, { cls: string; label: string }> = {
-  warning: { cls: 'warn', label: '警告' },
-  error: { cls: 'err', label: 'エラー' },
-  failed: { cls: 'err', label: '失敗' },
-  skipped: { cls: '', label: 'スルー' },
-};
 
 /** Render every page at 1 px/pt into an offscreen canvas, for the raster checks. */
 async function* rasterizePages(bytes: Uint8Array): AsyncIterable<PageRaster> {
@@ -261,7 +256,7 @@ function buildRulesForm(
   async function doSave(): Promise<void> {
     statusEl.textContent = '保存中…';
     const toSave = structuredClone(draft);
-    // "検査スルー" is set from the PDF tab: keep what is saved now, not the draft's copy.
+    // "検査スルー" is set from the 検査結果 view: keep what is saved now, not the draft's copy.
     const skipFiles = ctrl.state.workspace?.preflight.skipFiles;
     if (skipFiles?.length) toSave.skipFiles = [...skipFiles];
     else delete toSave.skipFiles;
@@ -507,11 +502,28 @@ export const preflightSection: Section = {
       resultBox,
     );
 
-    const gridEl = h('div', { class: 'grid grid-2' }, rulesPanel, runPanel);
+    const rulesGrid = splitGrid(ctrl, rulesPanel, runPanel, { key: 'preflight', initial: 0.55 });
+    const results = createResultsView(ctrl, {
+      rasterize: rasterizePages,
+      reload: async () => {
+        batch = await loadPreflightSummary(ctrl);
+        batchSkipJson = JSON.stringify(ctrl.state.workspace?.preflight.skipFiles ?? []);
+        renderBatch(ctrl.state);
+      },
+      nameOf: (it, dir) => reviewCopyName(it.file, it.annotated, dir),
+    });
+
+    // Two views: the rules and the run buttons, and the batch results with a preview.
+    const RESULTS_PREF = 'preflight.results';
+    const showResults = (on: boolean): void => ctrl.setPrefs({ panels: { ...ctrl.state.prefs.panels, [RESULTS_PREF]: on } });
+    const rulesTab = h('button', { type: 'button', attrs: { role: 'tab' }, on: { click: () => showResults(false) } }, 'ルールと実行');
+    const resultsTab = h('button', { type: 'button', attrs: { role: 'tab' }, on: { click: () => showResults(true) } }, '検査結果');
+    const viewBox = h('div', { class: 'subtab-view' });
+    const gridEl = h('div', { class: 'subtab-host' }, h('nav', { class: 'tabs subtabs', attrs: { role: 'tablist' } }, rulesTab, resultsTab), viewBox);
 
     let batch: PreflightBatchResult | undefined;
     let batchWs: unknown;
-    /** `skipFiles` the shown summary was loaded for: "検査スルー" set in the PDF tab rewrites the summary. */
+    /** `skipFiles` the shown summary was loaded for: "検査スルー" set in the 検査結果 view rewrites the summary. */
     let batchSkipJson: string | undefined;
 
     /**
@@ -569,6 +581,12 @@ export const preflightSection: Section = {
     }
 
     function renderBatch(state: AppState): void {
+      renderBatchBox(state);
+      results.update(state, batch);
+      resultsTab.textContent = batch ? `検査結果（${batch.items.filter((it) => it.result !== 'ok' || it.annotated).length}）` : '検査結果';
+    }
+
+    function renderBatchBox(state: AppState): void {
       const ws = state.workspace;
       batchButton.disabled = !ws || state.files.length === 0 || !!state.busy;
       batchCancelButton.hidden = !state.cancel;
@@ -595,13 +613,7 @@ export const preflightSection: Section = {
         replaceChildren(batchBox, h('p', { class: 'muted' }, `結果と注釈付き PDF は ${preflightDir(ctrl)}/ に保存されます．`));
         return;
       }
-      // Problems first, then the files marked "検査スルー".
-      const problems = [
-        ...batch.items.filter((it) => it.result !== 'ok' && it.result !== 'skipped'),
-        ...batch.items.filter((it) => it.result === 'skipped'),
-      ];
       const { ok, warning, error, failed, skipped } = batch.counts;
-      const dir = batch.dir;
       replaceChildren(
         batchBox,
         h(
@@ -611,29 +623,11 @@ export const preflightSection: Section = {
           h('span', { class: 'badge warn' }, `警告 ${warning}`),
           h('span', { class: 'badge err' }, `エラー ${error}`),
           failed ? h('span', { class: 'badge err' }, `検査失敗 ${failed}`) : '',
-          skipped ? h('span', { class: 'badge', title: 'PDF タブで「検査スルー」にした PDF' }, `スルー ${skipped}`) : '',
+          skipped ? h('span', { class: 'badge', title: '「検査結果」で検査スルーにした PDF' }, `スルー ${skipped}`) : '',
           h('span', { class: 'muted' }, `${batch.ranAt}（${batch.dir}/summary.csv）`),
           batch.cancelled ? h('span', { class: 'badge warn' }, `中止（${batch.items.length}/${batch.total ?? '?'} 件）`) : '',
         ),
-        problems.length
-          ? h(
-              'ul',
-              { class: 'list preflight-problems' },
-              problems.map((it) => {
-                const badge = BATCH_BADGE[it.result === 'ok' ? 'failed' : it.result];
-                return h(
-                  'li',
-                  {
-                    title: `${it.file}${it.annotated ? '（クリックで注釈付きの PDF を開く）' : ''}`,
-                    on: { click: () => it.annotated && void openInTab(it.annotated) },
-                  },
-                  h('span', { class: `badge ${badge.cls}` }, badge.label),
-                  h('span', { class: 'name' }, reviewCopyName(it.file, it.annotated, dir)),
-                  h('span', { class: 'muted summary' }, it.summary),
-                );
-              }),
-            )
-          : h('p', { class: 'ok' }, 'すべての PDF が問題なしでした．'),
+        button('検査結果を見る', () => showResults(true), 'btn btn-sm', 'file-text'),
       );
     }
 
@@ -736,6 +730,15 @@ export const preflightSection: Section = {
 
       renderRunPanel(state);
       renderBatch(state);
+
+      const onResults = !!state.prefs.panels[RESULTS_PREF];
+      rulesTab.setAttribute('aria-selected', String(!onResults));
+      resultsTab.setAttribute('aria-selected', String(onResults));
+      const subView = onResults ? results.el : rulesGrid;
+      if (viewBox.firstChild !== subView) replaceChildren(viewBox, subView);
+      // The results fill the window (list and preview scroll on their own), like the PDF tab.
+      root.classList.toggle('section-fill', onResults);
+      gridEl.classList.toggle('fill', onResults);
     }
 
     return (state) => applyState(state);

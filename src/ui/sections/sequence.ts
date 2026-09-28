@@ -27,7 +27,7 @@ import { currentPageRangeRows, exportPageRanges } from '@/state/pageRanges';
 import { importSequenceFile } from '@/state/sequenceImport';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
-import { button, copyToClipboard, h, iconButton, replaceChildren } from '../dom';
+import { button, copyToClipboard, h, iconButton, keepFocus, replaceChildren } from '../dom';
 
 const ORDER_LABEL: Record<SequenceOrder, string> = {
   name: 'ファイル名順（自然順: paper2 < paper10）',
@@ -291,6 +291,8 @@ export const sequenceSection: Section = {
         const entry = ws.sequence.entries.find((e) => e.file === item.file);
         const upBtn = iconButton('arrow-up', '上へ', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, -1), { action: 'move', file: item.file, delta: -1 }));
         const downBtn = iconButton('arrow-down', '下へ', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, 1), { action: 'move', file: item.file, delta: 1 }));
+        upBtn.dataset.focusKey = `up:${item.file}`;
+        downBtn.dataset.focusKey = `down:${item.file}`;
         upBtn.disabled = item.missing || idx === 0;
         downBtn.disabled = item.missing || idx === seq.items.length - 1;
         upBtn.title = manual ? '上へ' : '上へ（並び順が「手動」に切り替わります）';
@@ -305,6 +307,7 @@ export const sequenceSection: Section = {
           value: entry?.startPage !== undefined ? String(entry.startPage) : '',
           disabled: item.missing || item.skipped,
           title: '開始ページ番号を固定（空欄 = 前のファイルの続き）',
+          dataset: { focusKey: `pin:${item.file}` },
           style: { width: '72px' },
           on: {
             change: () => {
@@ -321,6 +324,7 @@ export const sequenceSection: Section = {
           value: entry?.output ?? '',
           disabled: item.missing,
           title: '出力ファイル名（空欄 = <名前><接尾辞>.pdf）',
+          dataset: { focusKey: `out:${item.file}` },
           style: { width: '180px' },
           on: {
             change: () => {
@@ -331,6 +335,7 @@ export const sequenceSection: Section = {
         });
         const skipInput = h('input', {
           type: 'checkbox',
+          dataset: { focusKey: `skip:${item.file}` },
           checked: item.skipped,
           disabled: item.missing,
           on: { change: () => void commit((cfg) => setFileOverrides(cfg, item.file, { skip: skipInput.checked }), { action: 'skip', file: item.file, skip: skipInput.checked }) },
@@ -415,7 +420,8 @@ export const sequenceSection: Section = {
 
       const changed = ws !== lastWorkspace || state.sequence !== lastResolved || (ws?.sequence ?? undefined) !== lastSequenceCfg;
       if (changed) {
-        renderList(state);
+        // Tabbing from one edited field to the next commits and re-renders the list: keep the user's place.
+        keepFocus(listPanel, () => renderList(state));
         renderExport(state);
       } else if (state.busy !== lastBusy) {
         renderExport(state);

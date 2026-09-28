@@ -71,11 +71,18 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
 const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: 'OK', warning: '警告', error: 'エラー' };
 const SEVERITY_CLASS: Record<PreflightReport['result'], string> = { ok: 'ok', warning: 'warn', error: 'err' };
 
+/** Lets the section trigger a save and recognise its own saves coming back. */
+interface SaveRef {
+  save: () => void;
+  /** JSON of the config most recently handed to `updatePreflightConfig`. */
+  savingJson?: string;
+}
+
 function buildRulesForm(
   ctrl: AppController,
   draft: PreflightConfig,
   statusEl: HTMLElement,
-  saveNowRef: { save: () => void },
+  saveNowRef: SaveRef,
 ): HTMLElement {
   const debouncedSave = debounce(() => void doSave(), 400);
   function scheduleSave(): void {
@@ -84,7 +91,11 @@ function buildRulesForm(
   }
   async function doSave(): Promise<void> {
     statusEl.textContent = '保存中…';
-    await ctrl.updatePreflightConfig(structuredClone(draft));
+    const toSave = structuredClone(draft);
+    // Our own save coming back through the store must not rebuild the form
+    // (that would drop the focus and the caret while the user is typing).
+    saveNowRef.savingJson = JSON.stringify(toSave);
+    await ctrl.updatePreflightConfig(toSave);
     statusEl.textContent = '保存しました';
   }
   saveNowRef.save = () => void doSave();
@@ -405,7 +416,7 @@ export const preflightSection: Section = {
 
     let draft: PreflightConfig | undefined;
     let savedJson: string | undefined;
-    const saveNowRef: { save: () => void } = { save: () => undefined };
+    const saveNowRef: SaveRef = { save: () => undefined };
 
     /** The single check's review copy (undefined path when the file passed). */
     let lastAnnotated: { file: string; path?: string } | undefined;
@@ -484,11 +495,16 @@ export const preflightSection: Section = {
 
     function applyState(state: AppState): void {
       const ws = state.workspace;
-      replaceChildren(root, ws ? gridEl : noWorkspace);
+      const view = ws ? gridEl : noWorkspace;
+      // Swap only when needed: re-attaching the form would drop the focus while typing.
+      if (root.firstChild !== view) replaceChildren(root, view);
       if (!ws) return;
 
       const cfgJson = JSON.stringify(ws.preflight);
-      if (!draft || cfgJson !== savedJson) {
+      if (draft && cfgJson !== savedJson && cfgJson === saveNowRef.savingJson) {
+        // The config we just saved: the form already shows it.
+        savedJson = cfgJson;
+      } else if (!draft || cfgJson !== savedJson) {
         draft = cloneConfig(ws.preflight);
         savedJson = cfgJson;
         renderForm();

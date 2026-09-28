@@ -1,12 +1,18 @@
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 
-/** A text run's bounding box in PDF user space (origin bottom-left), plus its string. */
+/**
+ * A text run in PDF user space (origin bottom-left), plus its string:
+ * `x`/`y` is where its baseline starts, `width` its advance along the
+ * baseline and `height` its font size. For unrotated text that is its box.
+ */
 export interface PageTextItem {
   str: string;
   x: number;
   y: number;
   width: number;
   height: number;
+  /** Baseline direction (radians, counter-clockwise; 0 = left to right). */
+  angle: number;
 }
 
 // `TextItem`/`TextMarkedContent` aren't among pdfjs-dist's public named
@@ -32,6 +38,9 @@ function isTextItem(item: TextContentItem): item is RawTextItem {
  *    font metrics); `sqrt(b² + d²)` is used as a fallback for the rare case
  *    `item.height` is missing or zero (it is the magnitude of the
  *    transform's vertical basis vector).
+ *  - `angle` is the direction of the transform's horizontal basis vector
+ *    `(a, b)`: rotated text (e.g. a figure's vertical axis label) has its
+ *    width along that direction, not along x.
  */
 export async function getPageTextItems(
   doc: PDFDocumentProxy,
@@ -43,7 +52,7 @@ export async function getPageTextItems(
   const items: PageTextItem[] = [];
   for (const item of content.items) {
     if (!isTextItem(item)) continue;
-    const [, b, , d, e, f] = item.transform;
+    const [a, b, , d, e, f] = item.transform;
     const height = item.height > 0 ? item.height : Math.hypot(b, d);
     items.push({
       str: item.str,
@@ -51,6 +60,7 @@ export async function getPageTextItems(
       y: f,
       width: item.width,
       height,
+      angle: a === 0 && b === 0 ? 0 : Math.atan2(b, a),
     });
   }
   return items;

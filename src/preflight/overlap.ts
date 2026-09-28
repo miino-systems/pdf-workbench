@@ -5,8 +5,19 @@
  */
 import type { PreflightFinding, Rect } from '@/core/types';
 
-/** A text run in the page's visible frame (`y` = baseline). */
+/** A text run in the page's visible frame (`y` = baseline); `run` for rotated text, see `PageTextBox`. */
 interface TextRun {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  run?: { x: number; y: number; angle: number; length: number; size: number };
+}
+
+/** A run measured in its own frame: `x` along the baseline, `y` the baseline. */
+interface Local {
+  src: TextRun;
   str: string;
   x: number;
   y: number;
@@ -22,6 +33,14 @@ const MIN_V_OVERLAP = 0.6;
 const MIN_H_OVERLAP = 0.3;
 /** …and at least this much, pt. */
 const MIN_H_OVERLAP_PT = 2;
+/**
+ * Baselines further apart than this share of the smaller run's size are
+ * different lines, not a clash: superscripts and subscripts (`W^in`,
+ * `W_ij^dyn`), axis tick labels over the axis title.
+ */
+const MAX_BASELINE_SHIFT = 0.25;
+/** Runs are compared only with runs of the same direction, in steps of this many degrees. */
+const ANGLE_STEP_DEG = 2;
 
 function chars(s: string): number {
   return (s.match(/[\p{L}\p{N}]/gu) ?? []).length;
@@ -29,19 +48,44 @@ function chars(s: string): number {
 
 /**
  * `TEXT_OVERLAP` findings: pairs of text runs (each with 2+ letters or
- * digits) whose boxes overlap substantially — sharing 60 % of the lower
- * one's height and 30 % (and 2 pt) of the narrower one's width. The same
- * text drawn twice at (nearly) the same place is left alone: that's how
- * some tools fake bold or add a shadow.
+ * digits) running the same direction whose boxes overlap substantially —
+ * on (nearly) the same baseline (within 25 % of the smaller size), sharing
+ * 60 % of the lower one's height and 30 % (and 2 pt) of the narrower one's
+ * width, measured along their baseline (so rotated text, e.g. a figure's
+ * vertical axis label, is judged by its real extent). The same text drawn
+ * twice at (nearly) the same place is left alone: that's how some tools
+ * fake bold or add a shadow.
  */
 export function findTextOverlaps(runs: TextRun[]): PreflightFinding[] {
-  const cands = runs.filter((r) => r.width > 0 && r.height > 0 && chars(r.str) >= MIN_CHARS).sort((a, b) => a.y - b.y);
+  const groups = new Map<number, TextRun[]>();
+  for (const r of runs) {
+    if (!(r.width > 0 && r.height > 0 && chars(r.str) >= MIN_CHARS)) continue;
+    const step = Math.round(((r.run?.angle ?? 0) * 180) / Math.PI / ANGLE_STEP_DEG);
+    const key = ((step % (360 / ANGLE_STEP_DEG)) + 360 / ANGLE_STEP_DEG) % (360 / ANGLE_STEP_DEG);
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+  const out: PreflightFinding[] = [];
+  for (const [key, group] of groups) out.push(...overlapsInFrame(group, (key * ANGLE_STEP_DEG * Math.PI) / 180));
+  return out;
+}
+
+/** {@link findTextOverlaps} for runs of one direction `angle`, compared in their own frame. */
+function overlapsInFrame(runs: TextRun[], angle: number): PreflightFinding[] {
+  const [c, s] = [Math.cos(angle), Math.sin(angle)];
+  const cands: Local[] = runs
+    .map((r) => {
+      const o = r.run ?? { x: r.x, y: r.y, length: r.width, size: r.height };
+      return { src: r, str: r.str, x: o.x * c + o.y * s, y: -o.x * s + o.y * c, width: o.length, height: o.size };
+    })
+    .filter((r) => r.width > 0 && r.height > 0)
+    .sort((a, b) => a.y - b.y);
   const maxHeight = Math.max(0, ...cands.map((r) => r.height));
   const out: PreflightFinding[] = [];
   for (let i = 0; i < cands.length; i++) {
     const a = cands[i];
     for (let j = i + 1; j < cands.length && cands[j].y < a.y + Math.max(a.height, maxHeight); j++) {
       const b = cands[j];
+      if (Math.abs(a.y - b.y) > MAX_BASELINE_SHIFT * Math.min(a.height, b.height)) continue;
       const vo = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
       if (vo < MIN_V_OVERLAP * Math.min(a.height, b.height)) continue;
       const ho = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
@@ -51,7 +95,7 @@ export function findTextOverlaps(runs: TextRun[]): PreflightFinding[] {
       const samePlace = Math.abs(a.x - b.x) < 1.5 && Math.abs(a.y - b.y) < 1.5;
       if (samePlace && (sa.includes(sb) || sb.includes(sa))) continue;
       // Box the narrower run: the clash is there (the other may be a whole line).
-      const n = a.width <= b.width ? a : b;
+      const n = (a.width <= b.width ? a : b).src;
       const rect: Rect = { x: n.x, y: n.y, width: n.width, height: n.height };
       out.push({ code: 'TEXT_OVERLAP', source: 'text', rect, text: `${sa} / ${sb}` });
     }

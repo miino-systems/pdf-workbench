@@ -53,7 +53,25 @@ export interface PageTextBox {
   y: number;
   width: number;
   height: number;
+  /**
+   * Rotated text only (e.g. a vertical axis label): where its baseline
+   * starts, its direction (radians, counter-clockwise), its advance along
+   * the baseline and its font size, all in the visible frame. `x`…`height`
+   * are then the box around the whole rotated run.
+   */
+  run?: TextRunFrame;
 }
+
+export interface TextRunFrame {
+  x: number;
+  y: number;
+  angle: number;
+  length: number;
+  size: number;
+}
+
+/** Below this (radians, about 0.5°) a run counts as horizontal. */
+const ROTATED_EPS = 0.01;
 
 /**
  * Merge located findings of the same code and check that sit on
@@ -223,16 +241,35 @@ export function marginFindingsForItems(
   return { codes: [...codes], findings };
 }
 
-/** A text run's box moved from the page's content space into its visible (rotated) frame. */
+/**
+ * A text run's box moved from the page's content space into its visible
+ * (rotated) frame. A run whose text is itself rotated (`item.angle`) gets
+ * the box around all of it, plus its own frame in `run`.
+ */
 function toVisibleRect(
-  item: { str: string; x: number; y: number; width: number; height: number },
+  item: { str: string; x: number; y: number; width: number; height: number; angle?: number },
   angle: ReturnType<typeof normalizeAngle>,
   raw: PageSize,
-): { str: string; x: number; y: number; width: number; height: number } {
-  if (angle === 0) return item;
-  const a = toVisiblePoint({ x: item.x, y: item.y }, angle, raw);
-  const b = toVisiblePoint({ x: item.x + item.width, y: item.y + item.height }, angle, raw);
-  return { str: item.str, x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) };
+): PageTextBox {
+  const t = item.angle ?? 0;
+  const [c, s] = [Math.cos(t), Math.sin(t)];
+  const o = { x: item.x, y: item.y };
+  const along = { x: c * item.width, y: s * item.width };
+  const up = { x: -s * item.height, y: c * item.height };
+  const corners = [o, { x: o.x + along.x, y: o.y + along.y }, { x: o.x + up.x, y: o.y + up.y }, { x: o.x + along.x + up.x, y: o.y + along.y + up.y }].map(
+    (p) => toVisiblePoint(p, angle, raw),
+  );
+  const xs = corners.map((p) => p.x);
+  const ys = corners.map((p) => p.y);
+  const box: PageTextBox = { str: item.str, x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+  // Direction as seen on the page: the page's /Rotate turns the text too.
+  const head = toVisiblePoint({ x: o.x + c, y: o.y + s }, angle, raw);
+  const start = corners[0];
+  const visibleAngle = Math.atan2(head.y - start.y, head.x - start.x);
+  if (Math.abs(visibleAngle) >= ROTATED_EPS) {
+    box.run = { x: start.x, y: start.y, angle: visibleAngle, length: item.width, size: item.height };
+  }
+  return box;
 }
 
 /**

@@ -216,19 +216,23 @@ export const sequenceSection: Section = {
     const REORDER_ACTIONS = new Set(['move', 'materialize']);
 
     async function commit(mutate: (cfg: SequenceConfig) => SequenceConfig, event?: Record<string, unknown>): Promise<void> {
-      const ws = ctrl.state.workspace;
-      if (!ws) return;
-      let next = mutate(ws.sequence);
+      if (!ctrl.state.workspace) return;
       const action = event?.action;
-      if (action === 'name-order') {
-        // Explicitly reset to natural name order: any import/manual history no longer applies.
-        next = { ...next, origin: { kind: 'name' } };
-      } else if (typeof action === 'string' && REORDER_ACTIONS.has(action)) {
-        // A manual reorder after an import keeps the import's provenance
-        // (source file, sortKey, ...) but notes that it was edited since.
-        next = { ...next, origin: next.origin ? { ...next.origin, editedAt: formatTs() } : { kind: 'manual', editedAt: formatTs() } };
-      }
-      await ctrl.updateSequence(next, event);
+      // Passed as a function so that, if sequence.json was edited outside
+      // the app meanwhile, the change is applied to that version instead.
+      await ctrl.updateSequence((current) => {
+        const next = mutate(current);
+        if (action === 'name-order') {
+          // Explicitly reset to natural name order: any import/manual history no longer applies.
+          return { ...next, origin: { kind: 'name' } };
+        }
+        if (typeof action === 'string' && REORDER_ACTIONS.has(action)) {
+          // A manual reorder after an import keeps the import's provenance
+          // (source file, sortKey, ...) but notes that it was edited since.
+          return { ...next, origin: next.origin ? { ...next.origin, editedAt: formatTs() } : { kind: 'manual', editedAt: formatTs() } };
+        }
+        return next;
+      }, event);
     }
 
     function filePaths(): string[] {

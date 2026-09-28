@@ -246,6 +246,7 @@ describe('検査スルー (skipFiles)', () => {
     expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
     let summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
     expect(summary.counts).toEqual({ ok: 0, warning: 1, error: 0, failed: 0, skipped: 1 });
+    expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf')).toMatchObject({ result: 'skipped', codes: ['TOP_MARGIN'] });
 
     // The batch does not check it; a single check does, but leaves the folder alone.
     const res = await runPreflightBatch(ctrl);
@@ -257,11 +258,35 @@ describe('検査スルー (skipFiles)', () => {
     expect(single.annotated).toBeUndefined();
     expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
 
-    // Unmarking drops the row (not checked yet) and the setting.
+    // Unmarking checks it again: its row and copy come back.
     await setPreflightSkipped(ctrl, 'papers/a.pdf', false);
     expect(ctrl.requireWorkspace().preflight.skipFiles).toBeUndefined();
     summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
-    expect(summary.items.map((i: { file: string }) => i.file)).toEqual(['papers/b.pdf']);
-    expect(summary.counts.skipped).toBe(0);
+    expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf')).toMatchObject({ result: 'warning', codes: ['TOP_MARGIN'] });
+    expect(summary.counts).toMatchObject({ warning: 2, skipped: 0 });
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(true);
+  });
+});
+
+describe('filterBatchItems', () => {
+  it('filters by kind and by codes (any of them / only them), most serious first', async () => {
+    const { filterBatchItems, countBatchCodes } = await import('@/state/preflightBatch');
+    const items = [
+      { file: 'a', result: 'warning' as const, summary: '', codes: ['TEXT_OVERLAP'] },
+      { file: 'b', result: 'warning' as const, summary: '', codes: ['TEXT_OVERLAP', 'BOTTOM_MARGIN'] },
+      { file: 'c', result: 'error' as const, summary: '', codes: ['PAGE_SIZE'] },
+      { file: 'd', result: 'ok' as const, summary: '', annotated: 'preflight/d.pdf' },
+      { file: 'e', result: 'ok' as const, summary: '' },
+      { file: 'f', result: 'skipped' as const, summary: '', codes: ['TEXT_OVERLAP'] },
+    ];
+    const all = new Set(['error', 'failed', 'warning', 'phantom', 'skipped'] as const);
+    const files = (codes: string[], mode: 'any' | 'only', kinds: ReadonlySet<never> | Set<string> = all) =>
+      filterBatchItems(items, { kinds: kinds as never, codes: new Set(codes), mode }).map((i) => i.file);
+    expect(files([], 'any')).toEqual(['c', 'a', 'b', 'd', 'f']);
+    expect(files(['TEXT_OVERLAP'], 'any')).toEqual(['a', 'b', 'f']);
+    expect(files(['TEXT_OVERLAP'], 'only')).toEqual(['a', 'f']);
+    expect(files(['TEXT_OVERLAP', 'BOTTOM_MARGIN'], 'only')).toEqual(['a', 'b', 'f']);
+    expect(files(['TEXT_OVERLAP'], 'only', new Set(['warning']))).toEqual(['a']);
+    expect(countBatchCodes(items)).toEqual([['TEXT_OVERLAP', 3], ['BOTTOM_MARGIN', 1], ['PAGE_SIZE', 1]]);
   });
 });

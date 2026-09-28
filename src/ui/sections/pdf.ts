@@ -16,7 +16,6 @@ import { describeRange, sequenceItemFor } from '@/sequence';
 import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
 import { NEEDS_UPDATE_STATUSES, STATUS_LABEL, isUpToDate, type AppState, type FileStatus, type PdfFileItem } from '@/state/app';
 import { createFontResolver, generateStampedPdf } from '@/state/generate';
-import { isPreflightSkipped, setPreflightSkipped } from '@/state/preflightBatch';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
 import { splitGrid } from '../components/splitGrid';
@@ -156,7 +155,6 @@ export const pdfSection: Section = {
 
     let lastFilesSnapshot: PdfFileItem[] | undefined;
     let lastSequenceRef: AppState['sequence'];
-    let lastPreflightRef: unknown;
     let lastSelectedFile: string | undefined;
     let lastWorkspaceRef: AppState['workspace'];
     let lastStampsRef: StampsConfig | undefined;
@@ -449,9 +447,6 @@ export const pdfSection: Section = {
                 h('span', { class: `status-icon ${label.cls}` }, icon(label.icon as IconName, { label: label.text })),
                 h('span', { class: 'name' }, f.name, outputNameHint(f.path, f.name)),
                 g.id === 'update' ? h('span', { class: 'update-chip' }, '要更新') : '',
-                isPreflightSkipped(ws.preflight, f.path)
-                  ? h('span', { class: 'skip-chip', title: 'Preflight の一括検査でスルーします（ジョブ情報で解除）' }, '検査スルー')
-                  : '',
                 range && !range.skipped && range.pageStart !== undefined
                   ? h('span', { class: 'muted mono', title: '通しページ番号（Sequence タブ）' }, describeRange(range))
                   : '',
@@ -566,32 +561,6 @@ export const pdfSection: Section = {
           );
           if (job.message) children.push(h('pre', { class: 'muted' }, job.message));
         }
-        const selected = state.selectedFile;
-        const skipInput = h('input', {
-          type: 'checkbox',
-          checked: isPreflightSkipped(ws.preflight, selected),
-          disabled: !!state.busy,
-          on: {
-            change: () =>
-              void ctrl.run('検査スルーを変更', async () => {
-                await setPreflightSkipped(ctrl, selected, skipInput.checked);
-                ctrl.toast(
-                  'info',
-                  skipInput.checked
-                    ? `${basename(selected)} を一括検査でスルーします`
-                    : `${basename(selected)} のスルーを解除しました．Preflight タブで検査し直してください`,
-                );
-              }),
-          },
-        });
-        children.push(
-          h(
-            'label',
-            { class: 'row', title: '誤検出と分かっている PDF を Preflight の一括検査から外します（preflight.json の skipFiles）' },
-            skipInput,
-            'Preflight 検査スルー（誤検出）',
-          ),
-        );
       }
       replaceChildren(jobPanel, ...children);
     }
@@ -828,10 +797,8 @@ export const pdfSection: Section = {
         state.files !== lastFilesSnapshot ||
         state.selectedFile !== lastSelectedFile ||
         state.workspace !== lastWorkspaceRef ||
-        state.sequence !== lastSequenceRef ||
-        state.workspace?.preflight !== lastPreflightRef;
+        state.sequence !== lastSequenceRef;
       if (filesChanged) {
-        lastPreflightRef = state.workspace?.preflight;
         renderFiles(state);
         lastFilesSnapshot = state.files;
         lastSelectedFile = state.selectedFile;

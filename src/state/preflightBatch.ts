@@ -68,6 +68,11 @@ export interface PreflightBatchItem {
   file: string;
   result: PreflightReport['result'] | 'failed' | 'skipped';
   summary: string;
+  /**
+   * Problem codes found in the file (document, page errors and warnings),
+   * for filtering the results; kept when the file is marked "検査スルー".
+   */
+  codes?: PreflightWarningCode[];
   /** Workspace path of the annotated copy (only for files with problems or phantom findings). */
   annotated?: string;
   /** Workspace path of the saved JSON report. */
@@ -93,7 +98,12 @@ export function preflightDir(ctrl: AppController): string {
   return ctrl.requireWorkspace().config.directories.preflight ?? DEFAULT_PREFLIGHT_DIR;
 }
 
-const SKIPPED_SUMMARY = '検査スルー（PDF タブで指定）';
+const SKIPPED_SUMMARY = '検査スルー';
+
+/** Every problem code of a report, once each (document level first). */
+export function reportCodes(report: PreflightReport): PreflightWarningCode[] {
+  return [...new Set([...report.documentWarnings, ...report.pages.flatMap((p) => [...(p.errors ?? []), ...p.warnings])])];
+}
 
 /** Is `file` marked "検査スルー" (left out of the batch check)? */
 export function isPreflightSkipped(config: PreflightConfig, file: string): boolean {
@@ -330,7 +340,14 @@ export async function runPreflightBatch(
 
       const reportPath = `${WORKBENCH_FILES.reportsDir}/${reportFileName(file, ranAt)}`;
       await ws.fs.writeText(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-      const item: PreflightBatchItem = { file, result: report.result, summary: summarizeReport(report), report: reportPath, pageCount: report.pageCount };
+      const item: PreflightBatchItem = {
+        file,
+        result: report.result,
+        summary: summarizeReport(report),
+        codes: reportCodes(report),
+        report: reportPath,
+        pageCount: report.pageCount,
+      };
       if (report.result !== 'ok' || hasPhantomFindings(report)) {
         await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, config));
         item.annotated = annotatedPath;
@@ -401,7 +418,14 @@ export async function preflightSingle(
 
   const summary = await loadPreflightSummary(ctrl);
   if (summary) {
-    const item: PreflightBatchItem = { file, result: report.result, summary: summarizeReport(report), pageCount: report.pageCount, annotated };
+    const item: PreflightBatchItem = {
+      file,
+      result: report.result,
+      summary: summarizeReport(report),
+      codes: reportCodes(report),
+      pageCount: report.pageCount,
+      annotated,
+    };
     const i = summary.items.findIndex((it) => it.file === file);
     if (i >= 0) summary.items[i] = { ...summary.items[i], ...item, annotated };
     else summary.items.push(item);
@@ -418,6 +442,15 @@ export async function loadPreflightSummary(ctrl: AppController): Promise<Preflig
     const summary = JSON.parse(await ws.fs.readText(`${preflightDir(ctrl)}/summary.json`)) as PreflightBatchResult;
     // Summaries from before "検査スルー" have no `skipped` count.
     summary.counts = countResults(summary.items);
+    // …and older ones no `codes`: read them from the saved reports.
+    for (const it of summary.items) {
+      if (it.codes || !it.report || it.result === 'ok' || it.result === 'failed') continue;
+      try {
+        it.codes = reportCodes(JSON.parse(await ws.fs.readText(it.report)) as PreflightReport);
+      } catch {
+        /* report gone: the row just can't be filtered by code */
+      }
+    }
     return summary;
   } catch {
     return undefined;
@@ -425,12 +458,18 @@ export async function loadPreflightSummary(ctrl: AppController): Promise<Preflig
 }
 
 /**
- * Mark / unmark `file` as "検査スルー" (PDF tab). The last batch summary
- * follows along so the preflight folder stays consistent: a skipped file's
- * row becomes `skipped` and its annotated copy is removed; an unskipped
- * file's row is dropped (it has not been checked yet).
+ * Mark / unmark `file` as "検査スルー" (Preflight tab, 検査結果). The last
+ * batch summary follows along so the preflight folder stays consistent: a
+ * skipped file's row becomes `skipped` (keeping its codes, so the filters
+ * still find it) and its annotated copy is removed; an unskipped file is
+ * checked again (like "1 件だけ検査"), which brings back its row and copy.
  */
-export async function setPreflightSkipped(ctrl: AppController, file: string, skip: boolean): Promise<void> {
+export async function setPreflightSkipped(
+  ctrl: AppController,
+  file: string,
+  skip: boolean,
+  opts: { rasterize?: Rasterizer } = {},
+): Promise<void> {
   const ws = ctrl.requireWorkspace();
   const current = ws.preflight.skipFiles ?? [];
   if (current.includes(file) === skip) return;
@@ -445,18 +484,61 @@ export async function setPreflightSkipped(ctrl: AppController, file: string, ski
   if (skip) {
     const annotated = summary.items[i]?.annotated ?? ctrl.preflightCopyPathFor(file, summary.dir);
     if (await ws.fs.exists(annotated)) await ws.fs.remove(annotated);
-    const item: PreflightBatchItem = { file, result: 'skipped', summary: SKIPPED_SUMMARY };
+    const item: PreflightBatchItem = { file, result: 'skipped', summary: SKIPPED_SUMMARY, codes: summary.items[i]?.codes };
     if (i >= 0) summary.items[i] = item;
     else summary.items.push(item);
-  } else {
-    if (i < 0) return;
+    summary.counts = countResults(summary.items);
+    await writeSummary(ctrl, summary);
+  } else if (await ws.fs.exists(file)) {
+    await preflightSingle(ctrl, file, await ws.fs.readBytes(file), { rasterize: opts.rasterize });
+  } else if (i >= 0) {
     summary.items.splice(i, 1);
+    summary.counts = countResults(summary.items);
+    await writeSummary(ctrl, summary);
   }
-  summary.counts = countResults(summary.items);
-  await writeSummary(ctrl, summary);
 }
 
 /** Every problem code of a report in plain Japanese, for listings. */
 export function describeProblems(codes: PreflightWarningCode[], config?: PreflightConfig): string {
   return [...new Set(codes)].map((c) => describePreflightCode(c, config)).join('，');
+}
+
+/** How a batch row is listed: `phantom` = passed, but its copy marks invisible margin content. */
+export type BatchItemKind = 'error' | 'failed' | 'warning' | 'phantom' | 'skipped' | 'ok';
+
+export const BATCH_KIND_ORDER: readonly BatchItemKind[] = ['error', 'failed', 'warning', 'phantom', 'skipped', 'ok'];
+
+export function batchItemKind(it: PreflightBatchItem): BatchItemKind {
+  return it.result === 'ok' && it.annotated ? 'phantom' : it.result;
+}
+
+export interface BatchFilter {
+  /** Kinds to show. */
+  kinds: ReadonlySet<BatchItemKind>;
+  /** Problem codes to filter by; empty = any. */
+  codes: ReadonlySet<PreflightWarningCode>;
+  /** `any`: rows with at least one of `codes`; `only`: rows whose every code is among `codes`. */
+  mode: 'any' | 'only';
+}
+
+/** The rows `filter` lets through, most serious first (then in their original order). */
+export function filterBatchItems(items: PreflightBatchItem[], filter: BatchFilter): PreflightBatchItem[] {
+  const rank = (it: PreflightBatchItem): number => BATCH_KIND_ORDER.indexOf(batchItemKind(it));
+  return items
+    .filter((it) => {
+      if (!filter.kinds.has(batchItemKind(it))) return false;
+      if (filter.codes.size === 0) return true;
+      const codes = it.codes ?? [];
+      return filter.mode === 'any' ? codes.some((c) => filter.codes.has(c)) : codes.length > 0 && codes.every((c) => filter.codes.has(c));
+    })
+    .map((it, i) => ({ it, i }))
+    .sort((a, b) => rank(a.it) - rank(b.it) || a.i - b.i)
+    .map(({ it }) => it);
+}
+
+/** How many rows carry each code, most common first. */
+export function countBatchCodes(items: PreflightBatchItem[]): [PreflightWarningCode, number][] {
+  const counts = new Map<PreflightWarningCode, number>();
+  for (const it of items) for (const c of it.codes ?? []) counts.set(c, (counts.get(c) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }

@@ -494,7 +494,7 @@ export interface PreflightConfig {
   textRules?: PreflightTextRule[];
   /**
    * Workspace paths of PDFs the batch check passes over ("検査スルー", e.g.
-   * known false positives), set from the PDF tab. They are listed as
+   * known false positives), set in the Preflight tab's 検査結果. They are listed as
    * `skipped` in the summary and get no annotated copy.
    */
   skipFiles?: string[];

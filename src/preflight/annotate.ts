@@ -3,7 +3,8 @@
  * problems marked, for sending back to authors or checking by eye.
  *
  *  - the allowed text area (page minus margins) as a dashed frame,
- *  - each located finding boxed in red with a short ASCII label,
+ *  - each located finding boxed in red with a short ASCII label (phantom
+ *    findings — invisible margin content that does not count — in gray),
  *  - a comment (PDF Square annotation, Japanese text) on each box and a
  *    sticky note (Text annotation) per page listing every problem,
  *    so viewers show them in their comments list.
@@ -19,6 +20,7 @@ import { marginsForPage } from './checks';
 import { TEXT_FORBIDDEN, TEXT_REQUIRED, TEXT_RULE_INVALID, parseTextRuleCode } from './textRules';
 
 const RED = rgb(0.86, 0.1, 0.12);
+const GRAY = rgb(0.45, 0.47, 0.52);
 const AUTHOR = 'PDF Workbench Preflight';
 
 /**
@@ -73,9 +75,15 @@ const SOURCE_LABEL: Record<PreflightFinding['source'], string> = {
   stamp: 'スタンプ',
 };
 
+/** What a phantom finding is, by the check that found it. */
+function phantomLabel(f: PreflightFinding): string {
+  return f.source === 'raster' ? 'ごく薄い描画' : '見えない文字';
+}
+
 function findingComment(f: PreflightFinding, config: PreflightConfig): string {
   const what = f.text ? `「${f.text.length > 60 ? `${f.text.slice(0, 60)}…` : f.text}」` : '';
-  return `${describePreflightCode(f.code, config)}（${SOURCE_LABEL[f.source]}${what ? `: ${what}` : ''}）`;
+  const text = `${describePreflightCode(f.code, config)}（${SOURCE_LABEL[f.source]}${what ? `: ${what}` : ''}）`;
+  return f.phantom ? `（参考）${phantomLabel(f)}: ${text}．表示・印刷されないため結果には影響しません` : text;
 }
 
 /** A rect in the visible frame → the same area in content space (for drawing/annotations). */
@@ -98,14 +106,14 @@ function addAnnotation(doc: PDFDocument, page: PDFPage, dict: AnnotationDict): v
   else page.node.set(PDFName.of('Annots'), doc.context.obj([ref]));
 }
 
-function commonAnnotation(contents: string, rect: Rect): AnnotationDict {
+function commonAnnotation(contents: string, rect: Rect, color: [number, number, number] = [0.86, 0.1, 0.12]): AnnotationDict {
   return {
     Type: 'Annot',
     Rect: [rect.x, rect.y, rect.x + rect.width, rect.y + rect.height],
     Contents: PDFHexString.fromText(contents),
     T: PDFHexString.fromText(AUTHOR),
     M: PDFString.fromDate(new Date()),
-    C: [0.86, 0.1, 0.12],
+    C: color,
     F: 4, // print
   };
 }
@@ -126,7 +134,8 @@ export async function annotatePreflightPdf(
   for (const result of report.pages) {
     const docLevel = result.page === 1 ? report.documentWarnings : [];
     const codes = [...docLevel, ...(result.errors ?? []), ...result.warnings];
-    if (codes.length === 0) continue;
+    const phantoms = (result.findings ?? []).filter((f) => f.phantom);
+    if (codes.length === 0 && phantoms.length === 0) continue;
     const page = doc.getPage(result.page - 1);
     const raw = page.getSize();
     const angle = normalizeAngle(page.getRotation().angle);
@@ -151,10 +160,11 @@ export async function annotatePreflightPdf(
         angle,
         raw,
       );
-      page.drawRectangle({ ...r, color: RED, opacity: 0.12, borderColor: RED, borderWidth: 1, borderOpacity: 0.9 });
-      page.drawText(String(f.code), { x: r.x, y: r.y + r.height + 1.5, size: 5.5, font, color: RED });
+      const color = f.phantom ? GRAY : RED;
+      page.drawRectangle({ ...r, color, opacity: 0.12, borderColor: color, borderWidth: 1, borderOpacity: 0.9 });
+      page.drawText(f.phantom ? `${f.code} (phantom)` : String(f.code), { x: r.x, y: r.y + r.height + 1.5, size: 5.5, font, color });
       addAnnotation(doc, page, {
-        ...commonAnnotation(findingComment(f, config), r),
+        ...commonAnnotation(findingComment(f, config), r, f.phantom ? [0.45, 0.47, 0.52] : undefined),
         Subtype: 'Square',
         BS: { W: 1 },
         CA: 0.9,
@@ -167,11 +177,15 @@ export async function annotatePreflightPdf(
       const detail = [...new Set((result.findings ?? []).filter((f) => f.code === c && !f.rect && f.text).map((f) => f.text!))];
       return `・${describePreflightCode(c, config)}${detail.length ? `: ${detail.join(', ')}` : ''}`;
     });
-    const located = (result.findings ?? []).filter((f) => f.rect).length;
+    const phantomLines = [...new Set(phantoms.map((f) => `・（参考）${phantomLabel(f)}: ${describePreflightCode(f.code, config)}`))];
+    if (phantomLines.length) phantomLines.push('　（表示・印刷されないため結果には影響しません）');
+    const located = (result.findings ?? []).filter((f) => f.rect && !f.phantom).length;
+    const grayed = phantoms.filter((f) => f.rect).length;
+    const boxes = [located ? `赤枠 ${located} 箇所` : '', grayed ? `灰色の枠 ${grayed} 箇所（参考）` : ''].filter(Boolean);
     const note =
       `Preflight: ${report.file} p.${result.page}\n` +
-      `${lines.join('\n')}` +
-      (located ? `\n（赤枠 ${located} 箇所．点線は余白の内側の範囲）` : '');
+      `${[...(lines.length ? lines : ['問題なし']), ...phantomLines].join('\n')}` +
+      (boxes.length ? `\n（${boxes.join('，')}．点線は余白の内側の範囲）` : '');
     const noteAt = toContentRect({ x: 4, y: visible.height - 22, width: 18, height: 18 }, angle, raw);
     addAnnotation(doc, page, {
       ...commonAnnotation(note, noteAt),
@@ -179,7 +193,11 @@ export async function annotatePreflightPdf(
       Name: 'Comment',
       Open: false,
     });
-    page.drawText(`PREFLIGHT: ${[...new Set(codes)].join(', ')}`, {
+    const header = [
+      codes.length ? [...new Set(codes)].join(', ') : 'PASS',
+      phantoms.length ? `phantom: ${[...new Set(phantoms.map((f) => f.code))].join(', ')}` : '',
+    ].filter(Boolean);
+    page.drawText(`PREFLIGHT: ${header.join(' / ')}`, {
       ...toContentPoint({ x: 26, y: visible.height - 14 }, angle, raw),
       size: 6.5,
       font,

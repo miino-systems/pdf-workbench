@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { PDFArray, PDFDict, PDFDocument, PDFName } from 'pdf-lib';
 import { AppController } from '@/state/app';
-import { runPreflightBatch } from '@/state/preflightBatch';
+import { runPreflightBatch, type Rasterizer } from '@/state/preflightBatch';
 import { createMemoryDirectory } from './helpers/memfs';
 import { buildFixturePdf } from './helpers/pdf-fixtures';
 
@@ -155,5 +155,75 @@ describe('single-file check', () => {
     const res = await preflightSingle(ctrl, 'papers/x.pdf', bad);
     expect(await ctrl.requireWorkspace().fs.exists(res.annotated!)).toBe(true);
     expect(await ctrl.requireWorkspace().fs.exists('preflight/summary.json')).toBe(false);
+  });
+});
+
+describe('phantom margin content', () => {
+  /** A fake rasterizer: every page white at 1 px/pt, with `ink` (PDF rects) painted with `lum`. */
+  function rasterizer(ink: { x: number; y: number; width: number; height: number }[] = [], lum = 0): Rasterizer {
+    return async function* (bytes) {
+      const doc = await PDFDocument.load(bytes);
+      for (const [i, p] of doc.getPages().entries()) {
+        const { width, height } = p.getSize();
+        const w = Math.ceil(width);
+        const hgt = Math.ceil(height);
+        const data = new Uint8ClampedArray(w * hgt * 4).fill(255);
+        for (const r of ink) {
+          for (let y = Math.floor(height - r.y - r.height); y < Math.ceil(height - r.y); y++) {
+            for (let x = Math.floor(r.x); x < Math.ceil(r.x + r.width); x++) data.set([lum, lum, lum, 255], (y * w + x) * 4);
+          }
+        }
+        yield { page: i + 1, pageSize: { width, height }, image: { data, width: w, height: hgt } };
+      }
+    };
+  }
+  const footer = (): Promise<Uint8Array> =>
+    buildFixturePdf([{ size: A4, texts: [{ text: 'Body text', x: 100, y: 500 }, { text: 'ghost', x: 300, y: 30 }] }]);
+
+  it('passes a PDF whose margin text draws nothing, and still marks it in the review copy', async () => {
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    await ws.fs.writeBytes('papers/a.pdf', await footer());
+    await ctrl.refreshFiles();
+
+    const res = await runPreflightBatch(ctrl, { rasterize: rasterizer() });
+    const item = res.items[0];
+    expect(item.result).toBe('ok');
+    expect(item.summary).toContain('見えない要素 1 箇所');
+    expect(item.annotated).toBe('preflight/a_stamped_preflight.pdf');
+    const report = JSON.parse(await ws.fs.readText(item.report!));
+    expect(report.pages[0].warnings).toEqual([]);
+    expect(report.pages[0].findings).toEqual([expect.objectContaining({ code: 'BOTTOM_MARGIN', source: 'text', text: 'ghost', phantom: true })]);
+
+    const copy = await PDFDocument.load(await ws.fs.readBytes(item.annotated!));
+    const annots = copy.getPage(0).node.lookup(PDFName.of('Annots'), PDFArray);
+    const contents = annots.asArray().map((ref) => copy.context.lookup(ref, PDFDict).get(PDFName.of('Contents'))!.toString());
+    expect(contents.some((c) => c.includes(Buffer.from('（参考）見えない文字', 'utf16le').swap16().toString('hex').toUpperCase()))).toBe(true);
+  });
+
+  it('keeps the warning when the margin text shows', async () => {
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    await ws.fs.writeBytes('papers/a.pdf', await footer());
+    await ctrl.refreshFiles();
+    const res = await runPreflightBatch(ctrl, { rasterize: rasterizer([{ x: 300, y: 30, width: 20, height: 6 }]) });
+    expect(res.items[0].result).toBe('warning');
+    const report = JSON.parse(await ws.fs.readText(res.items[0].report!));
+    expect(report.pages[0].warnings).toEqual(['BOTTOM_MARGIN']);
+    expect(report.pages[0].findings.some((f: { phantom?: boolean }) => f.phantom)).toBe(false);
+  });
+
+  it('treats near-white margin ink as phantom, darker ink as a problem', async () => {
+    const ctrl = await setup();
+    const ws = ctrl.requireWorkspace();
+    await ws.fs.writeBytes('papers/a.pdf', await buildFixturePdf([{ size: A4, texts: [{ text: 'Body text', x: 100, y: 500 }] }]));
+    await ctrl.refreshFiles();
+    const box = [{ x: 400, y: 20, width: 10, height: 8 }];
+    const faint = await runPreflightBatch(ctrl, { rasterize: rasterizer(box, 245) });
+    expect(faint.items[0].result).toBe('ok');
+    expect(faint.items[0].annotated).toBeDefined();
+    const gray = await runPreflightBatch(ctrl, { rasterize: rasterizer(box, 200) });
+    expect(gray.items[0].result).toBe('warning');
+    expect(gray.items[0].summary).toContain('BOTTOM_MARGIN');
   });
 });

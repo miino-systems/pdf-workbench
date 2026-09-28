@@ -60,7 +60,8 @@ export interface PageTextBox {
  * consecutive lines (e.g. every line of a justified column touching the
  * right margin) into one box, so a page gets a handful of boxes instead of
  * one per line; then keep at most {@link MAX_FINDINGS_PER_CODE} per code, so
- * one busy code can't crowd out the others.
+ * one busy code can't crowd out the others. Phantom findings are merged
+ * and capped apart from real ones.
  */
 export function mergeFindings(findings: PreflightFinding[]): PreflightFinding[] {
   const out: PreflightFinding[] = [];
@@ -70,7 +71,7 @@ export function mergeFindings(findings: PreflightFinding[]): PreflightFinding[] 
       out.push(f);
       continue;
     }
-    const key = `${f.code}|${f.source}`;
+    const key = `${f.code}|${f.source}|${f.phantom ? 'phantom' : ''}`;
     groups.set(key, [...(groups.get(key) ?? []), f]);
   }
   for (const group of groups.values()) {
@@ -105,8 +106,9 @@ export function mergeFindings(findings: PreflightFinding[]): PreflightFinding[] 
   }
   const perCode = new Map<string, number>();
   return out.filter((f) => {
-    const n = (perCode.get(f.code) ?? 0) + 1;
-    perCode.set(f.code, n);
+    const key = `${f.code}|${f.phantom ? 'phantom' : ''}`;
+    const n = (perCode.get(key) ?? 0) + 1;
+    perCode.set(key, n);
     return !f.rect || n <= MAX_FINDINGS_PER_CODE;
   });
 }
@@ -184,9 +186,9 @@ function actualOrientation(size: PageSize): Orientation {
 /**
  * Which margin bands (top/bottom/left/right) do non-blank text items enter?
  * Items are in the page's visible frame. Returns the codes and one located
- * finding per offending item and band.
+ * finding per offending item and band (not capped).
  */
-function marginFindingsForItems(
+export function marginFindingsForItems(
   items: PageTextBox[],
   pageSize: PageSize,
   margins: PreflightMargins,

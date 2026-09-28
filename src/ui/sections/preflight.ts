@@ -86,6 +86,12 @@ function describeCodes(codes: string[], config: PreflightConfig | undefined, fin
     .join(', ');
 }
 
+/** Phantom findings on a page (reference only, not counted), for the result table. */
+function phantomNote(findings: PreflightFinding[] = []): HTMLElement | null {
+  const codes = [...new Set(findings.filter((f) => f.phantom).map((f) => f.code))];
+  return codes.length ? h('div', { class: 'muted' }, `参考: 見えない要素 ${codes.join(', ')}（結果に影響しません）`) : null;
+}
+
 /** A rule's pages as typed in the editor: empty = all pages, `1`, `1-2`, `1,3`, or `last` / `odd` / `even`. */
 function pagesToText(sel: PageSelector | undefined): string {
   if (!sel || sel.kind === 'all') return '';
@@ -643,7 +649,7 @@ export const preflightSection: Section = {
           null,
           h('td', null, String(p.page)),
           h('td', null, describeCodes(p.errors ?? [], ws?.preflight, p.findings)),
-          h('td', null, describeCodes(p.warnings, ws?.preflight, p.findings)),
+          h('td', null, describeCodes(p.warnings, ws?.preflight, p.findings), phantomNote(p.findings)),
         ),
       );
       replaceChildren(

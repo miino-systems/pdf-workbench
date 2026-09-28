@@ -6,6 +6,7 @@
  */
 export {
   runPreflight,
+  marginFindingsForItems,
   marginsForPage,
   marginTolerancesPt,
   mergeFindings,
@@ -17,6 +18,7 @@ export {
 export {
   checkMarginsByRaster,
   findMarginInkByRaster,
+  countInkInRect,
   checkStampCollision,
   type ImageDataLike,
   type MarginInkOptions,

@@ -28,6 +28,7 @@ export interface RasterCheckOptions {
 
 const DEFAULT_THRESHOLD = 250;
 const DEFAULT_MIN_PIXELS = 1;
+const DEFAULT_FAINT_THRESHOLD = 240;
 
 /** Rec. 601-ish perceptual luminance of one RGB(A) pixel; alpha is ignored (transparent counts as background/white). */
 function luminanceAt(data: ArrayLike<number>, pixelIndex: number): number {
@@ -134,7 +135,7 @@ function inkBounds(
   threshold: number,
   minPixels: number,
   skip: PixelBox[] = [],
-): PixelBox | undefined {
+): (PixelBox & { darkest: number }) | undefined {
   const left = Math.max(0, Math.floor(x0));
   const top = Math.max(0, Math.floor(y0));
   const right = Math.min(image.width, Math.ceil(x1));
@@ -144,20 +145,23 @@ function inkBounds(
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
+  let darkest = 255;
   for (let y = top; y < bottom; y++) {
     const rowStart = y * image.width;
     const rowSkip = skip.filter((s) => y >= s.top && y < s.bottom);
     for (let x = left; x < right; x++) {
-      if (luminanceAt(image.data, rowStart + x) >= threshold) continue;
+      const lum = luminanceAt(image.data, rowStart + x);
+      if (lum >= threshold) continue;
       if (rowSkip.some((s) => x >= s.left && x < s.right)) continue;
       ink++;
+      if (lum < darkest) darkest = lum;
       if (x < minX) minX = x;
       if (x > maxX) maxX = x;
       if (y < minY) minY = y;
       if (y > maxY) maxY = y;
     }
   }
-  return ink >= minPixels ? { left: minX, top: minY, right: maxX + 1, bottom: maxY + 1 } : undefined;
+  return ink >= minPixels ? { left: minX, top: minY, right: maxX + 1, bottom: maxY + 1, darkest } : undefined;
 }
 
 export interface MarginInkOptions extends RasterCheckOptions {
@@ -165,12 +169,19 @@ export interface MarginInkOptions extends RasterCheckOptions {
   tolerance?: number | MarginsPt;
   /** Areas (PDF visible space, pt) whose ink is not counted, e.g. text already checked by the text margin check. */
   ignore?: Rect[];
+  /**
+   * A band whose darkest ink pixel is this light (luminance 0..255) or
+   * lighter holds nothing that shows, e.g. the edge of a white box: its
+   * finding is marked `phantom`. Default 240.
+   */
+  faintThreshold?: number;
 }
 
 /**
  * Like {@link checkMarginsByRaster}, but also says *where*: for each margin
  * band containing ink, one finding whose `rect` is the bounding box of the
- * ink inside that band (PDF visible space, pt, origin bottom-left).
+ * ink inside that band (PDF visible space, pt, origin bottom-left),
+ * marked `phantom` when all of that ink is near-white.
  */
 export function findMarginInkByRaster(
   imageData: ImageDataLike,
@@ -180,6 +191,7 @@ export function findMarginInkByRaster(
 ): PreflightFinding[] {
   const threshold = opts.threshold ?? DEFAULT_THRESHOLD;
   const minPixels = opts.minPixels ?? DEFAULT_MIN_PIXELS;
+  const faint = opts.faintThreshold ?? DEFAULT_FAINT_THRESHOLD;
   const t = opts.tolerance ?? 0;
   const tol: MarginsPt = typeof t === 'number' ? { top: t, bottom: t, left: t, right: t } : t;
   const sx = imageData.width / pageSize.width;
@@ -212,9 +224,26 @@ export function findMarginInkByRaster(
       width: (b.right - b.left) / sx,
       height: (b.bottom - b.top) / sy,
     };
-    findings.push({ code, source: 'raster', rect });
+    findings.push(b.darkest >= faint ? { code, source: 'raster', rect, phantom: true } : { code, source: 'raster', rect });
   }
   return findings;
+}
+
+/**
+ * Number of ink pixels inside `rect` (PDF visible space, pt, origin
+ * bottom-left): 0 means nothing is drawn there, e.g. for invisible text.
+ */
+export function countInkInRect(imageData: ImageDataLike, pageSize: PageSize, rect: Rect, opts: RasterCheckOptions = {}): number {
+  const sx = imageData.width / pageSize.width;
+  const sy = imageData.height / pageSize.height;
+  return countInkPixels(
+    imageData,
+    rect.x * sx,
+    (pageSize.height - (rect.y + rect.height)) * sy,
+    (rect.x + rect.width) * sx,
+    (pageSize.height - rect.y) * sy,
+    opts.threshold ?? DEFAULT_THRESHOLD,
+  ).ink;
 }
 
 export interface StampCollisionOptions extends RasterCheckOptions {

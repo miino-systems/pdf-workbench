@@ -16,6 +16,14 @@ import { destroyPdfDocument, loadPdfDocument } from '@/pdf/reader/document';
 import { getPageTextItems } from '@/pdf/reader/text';
 import { getPageImages } from '@/pdf/reader/images';
 import { findStampDuplicates, imageSignature, type DuplicateProbe } from './duplicate';
+import {
+  TEXT_REQUIRED,
+  TEXT_RULE_INVALID,
+  compileTextRules,
+  findForbiddenText,
+  pageMatchesRequired,
+  textRuleCode,
+} from './textRules';
 import { resolvePages } from '@/stamps/pages';
 import { normalizeAngle, toVisiblePoint } from '@/pdf/stamper/rotation';
 
@@ -260,6 +268,12 @@ export async function runPreflight(
     const tolerance = config.page?.tolerance ?? DEFAULT_TOLERANCE_PT;
     const marginTextEnabled = config.checks?.marginText === true && config.margins !== undefined;
 
+    const rules = compileTextRules(config.textRules);
+    for (const rule of rules.invalid) documentWarnings.push(textRuleCode(TEXT_RULE_INVALID, rule.id));
+    const rulePages = rules.compiled.map((r) => new Set(r.rule.pages ? resolvePages(r.rule.pages, pageCount) : []));
+    const appliesTo = (i: number, page: number): boolean => !rules.compiled[i].rule.pages || rulePages[i].has(page);
+    const requiredMet = rules.compiled.map(() => false);
+
     const pages: PreflightPageResult[] = [];
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
       const page = await doc.getPage(pageNumber);
@@ -280,7 +294,8 @@ export async function runPreflight(
       let warnings: PreflightWarningCode[] = [];
       const findings: PreflightFinding[] = errors.map((code) => ({ code, source: 'page' as const }));
       const probes = ctx.duplicates?.(pageNumber, pageCount) ?? [];
-      if ((marginTextEnabled && config.margins) || probes.length > 0) {
+      const pageRules = rules.compiled.filter((_, i) => appliesTo(i, pageNumber));
+      if ((marginTextEnabled && config.margins) || probes.length > 0 || pageRules.length > 0) {
         const angle = normalizeAngle(page.rotate);
         const raw = page.getViewport({ scale: 1, rotation: 0 });
         const rawSize = { width: raw.width, height: raw.height };
@@ -305,6 +320,15 @@ export async function runPreflight(
             findings.push(...dup);
           }
         }
+        rules.compiled.forEach((rule, i) => {
+          if (!appliesTo(i, pageNumber)) return;
+          if (rule.require && !requiredMet[i] && pageMatchesRequired(rule, items)) requiredMet[i] = true;
+          const hits = findForbiddenText(rule, items);
+          if (hits.length === 0) return;
+          if (rule.rule.severity === 'error') errors.push(hits[0].code);
+          else warnings = [...warnings, hits[0].code];
+          findings.push(...hits);
+        });
       }
 
       pages.push({
@@ -316,9 +340,21 @@ export async function runPreflight(
       });
     }
 
+    // A required text found on none of its pages: reported on the first of them.
+    rules.compiled.forEach((rule, i) => {
+      if (!rule.require || requiredMet[i]) return;
+      const first = rule.rule.pages ? Math.min(...rulePages[i]) : 1;
+      const result = pages.find((p) => p.page === first);
+      if (!result) return; // selector picks no page of this document
+      const code = textRuleCode(TEXT_REQUIRED, rule.rule.id);
+      if (rule.rule.severity === 'error') result.errors = [...(result.errors ?? []), code];
+      else result.warnings.push(code);
+      result.findings = [...(result.findings ?? []), { code, source: 'text' }];
+    });
+
     const hasDocumentError = documentWarnings.some((c) => c === 'PAGE_COUNT_MIN' || c === 'PAGE_COUNT_MAX');
     const hasPageError = pages.some((p) => (p.errors?.length ?? 0) > 0);
-    const hasPageWarning = pages.some((p) => p.warnings.length > 0);
+    const hasPageWarning = pages.some((p) => p.warnings.length > 0) || documentWarnings.length > 0;
     const result: PreflightSeverity =
       hasDocumentError || hasPageError ? 'error' : hasPageWarning ? 'warning' : 'ok';
 

@@ -34,5 +34,17 @@ export {
   type DuplicateProbe,
   type ImageSignature,
 } from './duplicate.js';
+export {
+  TEXT_FORBIDDEN,
+  TEXT_REQUIRED,
+  TEXT_RULE_INVALID,
+  compileTextRules,
+  findForbiddenText,
+  pageMatchesRequired,
+  pageTextForRules,
+  parseTextRuleCode,
+  textRuleCode,
+  type CompiledTextRule,
+} from './textRules.js';
 export { reportFileName, summarizeReport } from './report.js';
 export { annotatePreflightPdf, describePreflightCode } from './annotate.js';

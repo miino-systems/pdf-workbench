@@ -9,7 +9,7 @@
  * a canvas, so the UI passes a `rasterize` function; without one only the
  * object-based checks run.
  */
-import type { PageSize, PreflightFinding, StampInstance, PreflightReport, PreflightWarningCode, Rect } from '@/core/types';
+import type { PageSize, PreflightConfig, PreflightFinding, StampInstance, PreflightReport, PreflightWarningCode, Rect } from '@/core/types';
 import { WORKBENCH_FILES } from '@/core/types';
 import { toPt } from '@/core/units';
 import { sha256 } from '@/crypto';
@@ -353,6 +353,6 @@ export async function loadPreflightSummary(ctrl: AppController): Promise<Preflig
 }
 
 /** Every problem code of a report in plain Japanese, for listings. */
-export function describeProblems(codes: PreflightWarningCode[]): string {
-  return [...new Set(codes)].map(describePreflightCode).join('，');
+export function describeProblems(codes: PreflightWarningCode[], config?: PreflightConfig): string {
+  return [...new Set(codes)].map((c) => describePreflightCode(c, config)).join('，');
 }

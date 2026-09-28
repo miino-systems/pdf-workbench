@@ -451,6 +451,29 @@ export interface PreflightMarginOverride {
   margins: Partial<Pick<PreflightMargins, 'top' | 'bottom' | 'left' | 'right'>>;
 }
 
+/**
+ * A text rule: a regular expression (JavaScript syntax, `u` flag always on)
+ * the selected pages must contain (`require`, reported once as
+ * `TEXT_REQUIRED:<id>` on the first selected page when no page matches) or
+ * must not contain (`forbid`, reported per match as `TEXT_FORBIDDEN:<id>`).
+ * The text is each page's text with runs of whitespace (and line breaks)
+ * as one space.
+ */
+export interface PreflightTextRule {
+  /** Short name, part of the reported code (e.g. `orcid` → `TEXT_REQUIRED:orcid`). */
+  id: string;
+  /** Pages to look at (default: all). */
+  pages?: PageSelector;
+  require?: string;
+  forbid?: string;
+  /** Extra regex flags, e.g. `i` (ignore case), `s`, `m`. */
+  flags?: string;
+  /** Shown in the review copy and lists instead of the generic description. */
+  message?: string;
+  /** Default `warning`. */
+  severity?: 'warning' | 'error';
+}
+
 /** `.pdf-workbench/preflight.json` */
 export interface PreflightConfig {
   version: number;
@@ -467,6 +490,8 @@ export interface PreflightConfig {
   /** Per-page margin overrides (e.g. a wider first-page top margin). See `PreflightMarginOverride`. */
   marginOverrides?: PreflightMarginOverride[];
   pages?: { min?: number; max?: number };
+  /** Text that must / must not appear, see `PreflightTextRule`. Always run (no `checks` switch). */
+  textRules?: PreflightTextRule[];
   checks?: {
     /** Object-based (getTextContent) margin check. */
     marginText?: boolean;

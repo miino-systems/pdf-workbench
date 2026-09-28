@@ -77,6 +77,13 @@
         "$ref": "#/$defs/PreflightMarginOverride"
       }
     },
+    "textRules": {
+      "type": "array",
+      "description": "指定ページに必ずある（require）／あってはならない（forbid）テキストの正規表現ルール。常に実行される（checks のスイッチはない）。",
+      "items": {
+        "$ref": "#/$defs/PreflightTextRule"
+      }
+    },
     "checks": {
       "type": "object",
       "description": "各チェックの有効/無効。",
@@ -102,6 +109,46 @@
     }
   },
   "$defs": {
+    "PreflightTextRule": {
+      "type": "object",
+      "description": "テキストルール（require と forbid の少なくとも一方を書く。どちらもないルールは何もしない）。テキストは各ページの文字列を、改行・連続した空白を空白 1 つにしてつないだもの。require は選んだページのどこにも一致しなければ TEXT_REQUIRED:<id>（最初のページに報告）、forbid は一致した箇所ごとに TEXT_FORBIDDEN:<id>。",
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ルール名。報告されるコードの一部になる（例: orcid → TEXT_REQUIRED:orcid）。"
+        },
+        "pages": {
+          "$ref": "stamps.schema.json#/$defs/PageSelector",
+          "description": "対象ページ（省略時は全ページ）。"
+        },
+        "require": {
+          "type": "string",
+          "description": "対象ページのどこかに一致しなければならない正規表現（JavaScript、u フラグ付き）。"
+        },
+        "forbid": {
+          "type": "string",
+          "description": "対象ページのどこにも一致してはならない正規表現（JavaScript、u フラグ付き）。"
+        },
+        "flags": {
+          "type": "string",
+          "pattern": "^[imsdv]*$",
+          "description": "追加の正規表現フラグ（例: i で大文字小文字を無視）。"
+        },
+        "message": {
+          "type": "string",
+          "description": "注釈付きコピーや結果一覧に出す説明（省略時は既定の文言）。"
+        },
+        "severity": {
+          "enum": ["warning", "error"],
+          "description": "既定は warning。"
+        }
+      }
+    },
     "PreflightMargins": {
       "type": "object",
       "description": "余白（ページの端から本文までの距離）。",

@@ -16,3 +16,4 @@ if (!root) throw new Error('#app not found');
 
 const ctrl = new AppController();
 mountApp(root, ctrl, sections);
+void ctrl.restoreLastWorkspace();

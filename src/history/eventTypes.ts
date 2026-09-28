@@ -2,6 +2,7 @@
 export const EVENT_TYPES = {
   workspaceOpened: 'workspace.opened',
   workspaceInitialized: 'workspace.initialized',
+  workspaceReloaded: 'workspace.reloaded',
   stampEnabled: 'stamp.enabled',
   stampDisabled: 'stamp.disabled',
   stampMoved: 'stamp.moved',
@@ -14,6 +15,8 @@ export const EVENT_TYPES = {
   fontSelected: 'font.selected',
   sequenceUpdated: 'sequence.updated',
   sequenceExported: 'sequence.exported',
+  undo: 'history.undo',
+  redo: 'history.redo',
 } as const;
 
 export type EventType = (typeof EVENT_TYPES)[keyof typeof EVENT_TYPES];

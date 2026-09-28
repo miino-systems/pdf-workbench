@@ -4,7 +4,7 @@
  */
 import type { AppController, AppState } from '@/state/app';
 import type { TabId } from '@/state/prefs';
-import { h, replaceChildren } from './dom';
+import { button, h, replaceChildren } from './dom';
 
 export interface Section {
   id: TabId;
@@ -21,6 +21,9 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const toasts = h('div', { class: 'toasts' });
   const busy = h('span', { class: 'muted' });
   const wsLabel = h('span', { class: 'muted' });
+  const undoBtn = button('↶', () => void ctrl.undo(), 'btn btn-sm');
+  const redoBtn = button('↷', () => void ctrl.redo(), 'btn btn-sm');
+  const reloadBtn = button('🔄 更新', () => void ctrl.reloadWorkspace(), 'btn btn-sm');
 
   const header = h(
     'header',
@@ -30,6 +33,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     tabs,
     h('span', { class: 'spacer' }),
     busy,
+    h('span', { class: 'row header-actions' }, undoBtn, redoBtn, reloadBtn),
     h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, '🔒 ', PRIVACY_NOTICE),
   );
 
@@ -89,15 +93,66 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     );
   }
 
+  function renderActions(state: AppState): void {
+    const mod = isMac() ? '⌘' : 'Ctrl+';
+    const noWs = !state.workspace || !!state.busy;
+    undoBtn.disabled = noWs || !state.undo.undo;
+    redoBtn.disabled = noWs || !state.undo.redo;
+    undoBtn.title = state.undo.undo ? `元に戻す: ${state.undo.undo} (${mod}Z)` : `元に戻す (${mod}Z)`;
+    redoBtn.title = state.undo.redo ? `やり直す: ${state.undo.redo} (${mod}⇧Z)` : `やり直す (${mod}⇧Z)`;
+    reloadBtn.disabled = !!state.busy;
+    reloadBtn.title = state.workspace
+      ? `Workspace をディスクから再読み込み (${mod}R)`
+      : `最近使った Workspace を開く (${mod}R)`;
+  }
+
   function render(state: AppState, prev: AppState): void {
     applyTheme(state);
     showTab(state.prefs.lastTab);
     busy.textContent = state.busy ? `⏳ ${state.busy}…` : '';
     wsLabel.textContent = state.workspace ? `Workspace: ${state.workspace.config.name}/` : '';
+    renderActions(state);
     renderToasts(state);
     for (const u of updaters.values()) u(state, prev);
   }
 
   ctrl.store.subscribe(render);
   render(ctrl.state, ctrl.state);
+  document.addEventListener('keydown', (ev) => handleShortcut(ev, ctrl));
+}
+
+function isMac(): boolean {
+  return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+}
+
+/** Text fields keep the browser's own Cmd+Z (undoing typed characters), not the app-level undo. */
+function isTextEditing(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement) return true;
+  if (!(target instanceof HTMLInputElement)) return false;
+  return !['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'file', 'range'].includes(target.type);
+}
+
+/**
+ * Global shortcuts:
+ *  - Cmd/Ctrl+Z → undo, Cmd/Ctrl+Shift+Z or Ctrl+Y → redo (config edits)
+ *  - Cmd/Ctrl+R → reload the workspace from disk instead of the page
+ *    (Cmd/Ctrl+Shift+R still reloads the page itself)
+ */
+export function handleShortcut(ev: KeyboardEvent, ctrl: AppController): void {
+  const mod = isMac() ? ev.metaKey : ev.ctrlKey;
+  if (!mod || ev.altKey) return;
+  const key = ev.key.toLowerCase();
+  if (key === 'r' && !ev.shiftKey) {
+    ev.preventDefault();
+    if (!ctrl.state.busy) void ctrl.reloadWorkspace();
+    return;
+  }
+  const redo = (key === 'z' && ev.shiftKey) || (key === 'y' && !ev.shiftKey && !isMac());
+  const undo = key === 'z' && !ev.shiftKey;
+  if (!undo && !redo) return;
+  if (isTextEditing(ev.target) || !ctrl.state.workspace) return;
+  ev.preventDefault();
+  if (ctrl.state.busy) return;
+  void (undo ? ctrl.undo() : ctrl.redo());
 }

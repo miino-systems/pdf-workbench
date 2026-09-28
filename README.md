@@ -113,6 +113,21 @@ git push
 6. 操作は `.pdf-workbench/history/events.jsonl` に記録され、source の SHA-256 は `jobs.json` に保存されます。
    前回処理後に元 PDF が変更されると「⚠ 元 PDF が前回処理時から変更されています」と警告します。
 
+### キーボードショートカット
+
+| キー | 動作 |
+|------|------|
+| <kbd>⌘Z</kbd> / <kbd>Ctrl+Z</kbd> | 直前の設定変更（スタンプ・通し番号・Settings・Preflight）を元に戻す。内容は画面右下に通知 |
+| <kbd>⌘⇧Z</kbd> / <kbd>Ctrl+Shift+Z</kbd>（<kbd>Ctrl+Y</kbd>） | やり直す |
+| <kbd>⌘R</kbd> / <kbd>Ctrl+R</kbd> | ページは再読み込みせず、Workspace をディスクから読み直す（ヘッダの 🔄 更新 と同じ）。Workspace を開いていなければ最近使った Workspace を開く |
+| <kbd>⌘⇧R</kbd> / <kbd>Ctrl+Shift+R</kbd> | ブラウザ本来のページ再読み込み |
+
+- Undo の対象は `.pdf-workbench/*.json` の設定のみで、生成済み PDF・`jobs.json`・履歴は戻しません。
+  テキスト入力中の <kbd>⌘Z</kbd> は入力欄の文字の取り消しになります。
+- 同じ対象への連続した編集（入力やドラッグの微調整）は 1 手順にまとめられます。
+- Workspace を再読み込み・切り替えると Undo 履歴はクリアされます（外部で変更されたファイルを上書きしないため）。
+- ページを再読み込みしたとき、ブラウザがアクセス許可を保持していれば最後の Workspace を自動で開きます。
+
 ### 通しページ番号（Sequence タブ）
 
 複数の PDF（予稿集の各論文など）に **通し番号** を振るための仕組みです。

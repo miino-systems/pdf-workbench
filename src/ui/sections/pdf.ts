@@ -19,6 +19,7 @@ import { createFontResolver, generateStampedPdf } from '@/state/generate';
 import { isPreflightSkipped, setPreflightSkipped } from '@/state/preflightBatch';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
+import { splitGrid } from '../components/splitGrid';
 import { button, formatBytes, h, iconButton, replaceChildren } from '../dom';
 import { icon, type IconName } from '../icons';
 
@@ -138,7 +139,7 @@ export const pdfSection: Section = {
 
     const previewPanel = h('div', { class: 'panel pdf-preview' }, h('h2', null, 'Preview'), toolbar, collisionMsg, previewWrap);
 
-    root.append(h('div', { class: 'grid grid-sidebar fill-layout' }, sidebar, previewPanel));
+    root.append(splitGrid(ctrl, sidebar, previewPanel, { key: 'pdf', initial: 0.32, class: 'fill-layout' }));
 
     // ------------------------------------------------------- render state
     let latestState: AppState = ctrl.state;

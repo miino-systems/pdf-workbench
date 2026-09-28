@@ -1,6 +1,7 @@
 /**
  * UI preferences. This is the ONLY thing stored in localStorage (spec §5):
- * theme, last tab, panel open/closed state, default DPI, display unit.
+ * theme, last tab, panel open/closed state, default DPI, display unit,
+ * column widths of the split layouts.
  * Workspace configuration never lives here.
  */
 export type Theme = 'system' | 'light' | 'dark';
@@ -14,6 +15,8 @@ export interface UiPrefs {
   defaultDpi: number;
   unit: DisplayUnit;
   previewZoom: number;
+  /** Left column's share of two-column layouts with a draggable divider, by layout (`pdf`, `preflight`). */
+  splits: Record<string, number>;
 }
 
 const KEY = 'pdf-workbench.prefs.v1';
@@ -25,6 +28,7 @@ export const DEFAULT_PREFS: UiPrefs = {
   defaultDpi: 300,
   unit: 'mm',
   previewZoom: 1,
+  splits: {},
 };
 
 function storage(): Storage | undefined {
@@ -42,7 +46,7 @@ export function loadPrefs(): UiPrefs {
     const raw = s.getItem(KEY);
     if (!raw) return { ...DEFAULT_PREFS };
     const parsed = JSON.parse(raw) as Partial<UiPrefs>;
-    return { ...DEFAULT_PREFS, ...parsed, panels: { ...parsed.panels } };
+    return { ...DEFAULT_PREFS, ...parsed, panels: { ...parsed.panels }, splits: { ...parsed.splits } };
   } catch {
     return { ...DEFAULT_PREFS };
   }

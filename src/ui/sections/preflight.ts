@@ -17,6 +17,7 @@ import type { AppController, AppState } from '@/state/app';
 import { isPreflightSkipped, loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
 import { basename } from '@/workspace';
+import { splitGrid } from '../components/splitGrid';
 import { button, h, replaceChildren } from '../dom';
 
 const BATCH_BADGE: Record<Exclude<PreflightBatchResult['items'][number]['result'], 'ok'>, { cls: string; label: string }> = {
@@ -507,7 +508,7 @@ export const preflightSection: Section = {
       resultBox,
     );
 
-    const gridEl = h('div', { class: 'grid grid-2' }, rulesPanel, runPanel);
+    const gridEl = splitGrid(ctrl, rulesPanel, runPanel, { key: 'preflight', initial: 0.55 });
 
     let batch: PreflightBatchResult | undefined;
     let batchWs: unknown;

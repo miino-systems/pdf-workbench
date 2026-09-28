@@ -105,7 +105,19 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 .grid-2 { grid-template-columns: 1fr 1fr; }
 .grid-3 { grid-template-columns: 320px 1fr 320px; }
 .grid-sidebar { grid-template-columns: 340px 1fr; }
-@media (max-width: 1000px) { .grid-2, .grid-3, .grid-sidebar { grid-template-columns: 1fr; } }
+/* Two columns with a draggable divider (components/splitGrid.ts): left, a 0-width handle column, right. */
+.grid-split { grid-template-columns: var(--split-cols, minmax(0, 1fr) 0px minmax(0, 1fr)); column-gap: 8px; }
+.split-handle { position: relative; z-index: 1; }
+.split-handle::before {
+  content: ''; position: absolute; top: 0; bottom: 0; left: -5px; width: 10px;
+  cursor: col-resize; border-radius: 4px;
+}
+.split-handle:hover::before, .grid-split.splitting .split-handle::before { background: color-mix(in srgb, var(--accent) 25%, transparent); }
+.grid-split.splitting { cursor: col-resize; user-select: none; }
+@media (max-width: 1000px) {
+  .grid-2, .grid-3, .grid-sidebar, .grid-split { grid-template-columns: 1fr; }
+  .split-handle { display: none; }
+}
 
 .panel {
   background: var(--panel);

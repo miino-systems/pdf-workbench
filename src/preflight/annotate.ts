@@ -16,12 +16,24 @@ import type { PageSize, PreflightConfig, PreflightFinding, PreflightReport, Pref
 import { toPt } from '@/core/units';
 import { normalizeAngle, toContentPoint, visiblePageSize, type PageAngle } from '@/pdf/stamper/rotation';
 import { marginsForPage } from './checks';
+import { TEXT_FORBIDDEN, TEXT_REQUIRED, TEXT_RULE_INVALID, parseTextRuleCode } from './textRules';
 
 const RED = rgb(0.86, 0.1, 0.12);
 const AUTHOR = 'PDF Workbench Preflight';
 
-/** Japanese description of a preflight code, for comments and summaries. */
-export function describePreflightCode(code: PreflightWarningCode): string {
+/**
+ * Japanese description of a preflight code, for comments and summaries.
+ * With `config`, a text rule's code is described by the rule's `message`.
+ */
+export function describePreflightCode(code: PreflightWarningCode, config?: PreflightConfig): string {
+  const rule = parseTextRuleCode(code);
+  if (rule) {
+    const message = config?.textRules?.find((r) => r.id === rule.id)?.message;
+    if (message && rule.kind !== TEXT_RULE_INVALID) return message;
+    if (rule.kind === TEXT_REQUIRED) return `必要なテキストがありません（${rule.id}）`;
+    if (rule.kind === TEXT_FORBIDDEN) return `使ってはいけないテキストがあります（${rule.id}）`;
+    return `テキストルール「${rule.id}」の正規表現が正しくありません`;
+  }
   switch (code) {
     case 'TOP_MARGIN':
       return '上余白にはみ出しています';
@@ -41,6 +53,14 @@ export function describePreflightCode(code: PreflightWarningCode): string {
       return 'ページ数が最大値を超えています';
     case 'STAMP_COLLISION':
       return 'スタンプが既存の内容と重なります';
+    case 'STAMP_DUPLICATE':
+      return 'スタンプと同じ内容が原稿にすでにあります';
+    case 'TEXT_OVERLAP':
+      return '文字が重なっています（表示が崩れている可能性があります）';
+    case 'FONT_NOT_EMBEDDED':
+      return '埋め込まれていないフォントがあります';
+    case 'FONT_TYPE3':
+      return 'Type 3 フォント（ビットマップフォントの可能性）が使われています';
     default:
       return code;
   }
@@ -53,9 +73,9 @@ const SOURCE_LABEL: Record<PreflightFinding['source'], string> = {
   stamp: 'スタンプ',
 };
 
-function findingComment(f: PreflightFinding): string {
+function findingComment(f: PreflightFinding, config: PreflightConfig): string {
   const what = f.text ? `「${f.text.length > 60 ? `${f.text.slice(0, 60)}…` : f.text}」` : '';
-  return `${describePreflightCode(f.code)}（${SOURCE_LABEL[f.source]}${what ? `: ${what}` : ''}）`;
+  return `${describePreflightCode(f.code, config)}（${SOURCE_LABEL[f.source]}${what ? `: ${what}` : ''}）`;
 }
 
 /** A rect in the visible frame → the same area in content space (for drawing/annotations). */
@@ -134,7 +154,7 @@ export async function annotatePreflightPdf(
       page.drawRectangle({ ...r, color: RED, opacity: 0.12, borderColor: RED, borderWidth: 1, borderOpacity: 0.9 });
       page.drawText(String(f.code), { x: r.x, y: r.y + r.height + 1.5, size: 5.5, font, color: RED });
       addAnnotation(doc, page, {
-        ...commonAnnotation(findingComment(f), r),
+        ...commonAnnotation(findingComment(f, config), r),
         Subtype: 'Square',
         BS: { W: 1 },
         CA: 0.9,
@@ -142,7 +162,11 @@ export async function annotatePreflightPdf(
     }
 
     // One sticky note per page listing everything (incl. page-level problems without a location).
-    const lines = [...new Set(codes)].map((c) => `・${describePreflightCode(c)}`);
+    // Problems without a location carry their detail here (e.g. the font names).
+    const lines = [...new Set(codes)].map((c) => {
+      const detail = [...new Set((result.findings ?? []).filter((f) => f.code === c && !f.rect && f.text).map((f) => f.text!))];
+      return `・${describePreflightCode(c, config)}${detail.length ? `: ${detail.join(', ')}` : ''}`;
+    });
     const located = (result.findings ?? []).filter((f) => f.rect).length;
     const note =
       `Preflight: ${report.file} p.${result.page}\n` +

@@ -9,30 +9,34 @@
  * a canvas, so the UI passes a `rasterize` function; without one only the
  * object-based checks run.
  */
-import type { PageSize, PreflightFinding, PreflightReport, PreflightWarningCode, Rect } from '@/core/types';
+import type { PageSize, PreflightConfig, PreflightFinding, StampInstance, PreflightReport, PreflightWarningCode, Rect } from '@/core/types';
 import { WORKBENCH_FILES } from '@/core/types';
 import { toPt } from '@/core/units';
 import { sha256 } from '@/crypto';
 import { EVENT_TYPES } from '@/history';
 import { formatTs } from '@/history/timestamp';
 import { StampMetrics, measureLayers } from '@/pdf/stamper';
+import { decodeImageFile } from '@/pdf/reader/images';
 import {
   annotatePreflightPdf,
   checkStampCollision,
   describePreflightCode,
   findMarginInkByRaster,
+  imageSignature,
   marginTolerancesPt,
   marginsForPage,
   mergeFindings,
   reportFileName,
   runPreflight,
   summarizeReport,
+  type DuplicateProbe,
   type ImageDataLike,
+  type ImageSignature,
   type PageTextBox,
 } from '@/preflight';
 import { sequenceItemFor } from '@/sequence';
 import { effectivePosition, resolvePages, stampRect } from '@/stamps';
-import { basename, stripExtension } from '@/workspace';
+import { basename } from '@/workspace';
 import type { AppController } from './app';
 import { createFontResolver } from './generate';
 
@@ -100,10 +104,53 @@ export interface PreflightOneOptions {
   now?: Date;
   /** Shared across a batch so fonts/images are loaded once. */
   metrics?: StampMetrics;
+  /** Signatures of stamp images for the duplicate check, by `src`; shared across a batch. */
+  signatures?: Map<string, Promise<ImageSignature | undefined>>;
 }
 
 /**
- * Preflight one PDF: the object-based checks, then (with `rasterize`) the
+ * What each enabled stamp would add (its text layers' text, its image
+ * layers' signatures), for the `STAMP_DUPLICATE` check. Page-number layers
+ * are left out: numbers are everywhere in a paper.
+ */
+async function duplicateProbes(
+  ctrl: AppController,
+  signatures: Map<string, Promise<ImageSignature | undefined>>,
+): Promise<{ probe: DuplicateProbe; pages: StampInstance['pages'] }[]> {
+  const ws = ctrl.requireWorkspace();
+  const out: { probe: DuplicateProbe; pages: StampInstance['pages'] }[] = [];
+  for (const inst of ws.stamps.instances.filter((i) => i.enabled)) {
+    const def = ws.stamps.definitions.find((d) => d.id === inst.stampId);
+    if (!def) continue;
+    const texts: string[] = [];
+    const images: ImageSignature[] = [];
+    for (const layer of def.layers) {
+      if (layer.type === 'text' && layer.text.trim()) texts.push(layer.text);
+      if (layer.type === 'image') {
+        let sig = signatures.get(layer.src);
+        if (!sig) {
+          sig = ws.fs
+            .readBytes(layer.src)
+            .then(decodeImageFile)
+            .then((img) => (img ? imageSignature(img) : undefined))
+            .catch((e: unknown) => {
+              console.warn('preflight: stamp image unreadable, skipped in the duplicate check', layer.src, e);
+              return undefined;
+            });
+          signatures.set(layer.src, sig);
+        }
+        const found = await sig;
+        if (found) images.push(found);
+      }
+    }
+    if (texts.length || images.length) out.push({ probe: { name: def.name, texts, images }, pages: inst.pages });
+  }
+  return out;
+}
+
+/**
+ * Preflight one PDF: the object-based checks (and, when enabled, whether a
+ * stamp's text or image is already in it), then (with `rasterize`) the
  * raster margin check and the stamp-collision check for the enabled
  * placements. Used by the batch and by the single-file check.
  */
@@ -116,11 +163,15 @@ export async function preflightOne(
   const ws = ctrl.requireWorkspace();
   const config = ws.preflight;
   const texts = new Map<number, PageTextBox[]>();
+  const probes = config.checks?.stampDuplicate ? await duplicateProbes(ctrl, opts.signatures ?? new Map()) : [];
   const report = await runPreflight(bytes, config, {
     file,
     sha256: await sha256(bytes),
     now: opts.now,
     onPageText: (page, items) => texts.set(page, items),
+    duplicates: probes.length
+      ? (page, pageCount) => probes.filter((p) => resolvePages(p.pages, pageCount).includes(page)).map((p) => p.probe)
+      : undefined,
   });
 
   const collision = config.checks?.stampCollision === true && !!opts.rasterize;
@@ -196,6 +247,7 @@ export async function runPreflightBatch(
   await ctrl.clearGeneratedDir(dir);
 
   const metrics = newStampMetrics(ctrl);
+  const signatures = new Map<string, Promise<ImageSignature | undefined>>();
 
   let cancelled = false;
   for (const [i, file] of files.entries()) {
@@ -204,11 +256,10 @@ export async function runPreflightBatch(
       cancelled = true;
       break;
     }
-    const stem = stripExtension(basename(file));
-    const annotatedPath = `${dir}/${stem}_preflight.pdf`;
+    const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
     try {
       const bytes = await ws.fs.readBytes(file);
-      const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics, signal: opts.signal });
+      const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize, now: ranAt, metrics, signatures, signal: opts.signal });
 
       const reportPath = `${WORKBENCH_FILES.reportsDir}/${reportFileName(file, ranAt)}`;
       await ws.fs.writeText(reportPath, `${JSON.stringify(report, null, 2)}\n`);
@@ -269,11 +320,10 @@ export async function preflightSingle(
 ): Promise<{ report: PreflightReport; annotated?: string }> {
   const ws = ctrl.requireWorkspace();
   const dir = preflightDir(ctrl);
-  const annotatedPath = `${dir}/${stripExtension(basename(file))}_preflight.pdf`;
+  const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
   const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize });
   let annotated: string | undefined;
   if (report.result !== 'ok') {
-    await ws.fs.mkdirp(dir);
     await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, ws.preflight));
     annotated = annotatedPath;
   } else if (await ws.fs.exists(annotatedPath)) {
@@ -303,6 +353,6 @@ export async function loadPreflightSummary(ctrl: AppController): Promise<Preflig
 }
 
 /** Every problem code of a report in plain Japanese, for listings. */
-export function describeProblems(codes: PreflightWarningCode[]): string {
-  return [...new Set(codes)].map(describePreflightCode).join('，');
+export function describeProblems(codes: PreflightWarningCode[], config?: PreflightConfig): string {
+  return [...new Set(codes)].map((c) => describePreflightCode(c, config)).join('，');
 }

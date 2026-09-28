@@ -8,7 +8,7 @@ import {
   saveStampsConfig,
 } from '@/workspace/store';
 import { createDefaultPreflightConfig } from '@/workspace/defaults';
-import { outputPathFor, isSourcePath, joinPath, dirname, basename, stripExtension } from '@/workspace/paths';
+import { outputPathFor, preflightCopyPathFor, isSourcePath, joinPath, dirname, basename, stripExtension } from '@/workspace/paths';
 import { createMemoryDirectory, dumpTree } from './helpers/memfs';
 
 function makeFs(): WorkspaceFS {
@@ -109,6 +109,15 @@ describe('workspace/paths', () => {
     expect(outputPathFor('papers/report.pdf', config, 'sub/NOLTA-01.PDF')).toBe('output/sub/NOLTA-01.PDF');
     expect(outputPathFor('papers/report.pdf', config, '../papers/report.pdf')).toBe('output/papers/report.pdf');
     expect(outputPathFor('papers/report.pdf', config, '   ')).toBe('output/report_stamped.pdf');
+  });
+
+  it('preflightCopyPathFor is the output name plus _preflight, inside the preflight dir', () => {
+    const config = createDefaultWorkspaceConfigForTest();
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight')).toBe('preflight/report_stamped_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', 'NOLTA-01.pdf')).toBe('preflight/NOLTA-01_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', 'sub/NOLTA-02')).toBe('preflight/sub/NOLTA-02_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', '../x.PDF')).toBe('preflight/x_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', '  ')).toBe('preflight/report_stamped_preflight.pdf');
   });
 
   it('outputPathFor builds <output dir>/<base><suffix>.pdf', () => {
@@ -263,7 +272,7 @@ describe('workspace initialisation and (re)loading', () => {
     // Checks default to enabled: users should be able to catch a header
     // running into the margin without first discovering and flipping a
     // checkbox (field feedback — see preflight.test.ts for the preset tests).
-    expect(config.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true });
+    expect(config.checks).toEqual({ marginText: true, marginRaster: true, stampCollision: true, stampDuplicate: true, textOverlap: true, fonts: true });
   });
 });
 

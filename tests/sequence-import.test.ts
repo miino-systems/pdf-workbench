@@ -229,6 +229,10 @@ describe('sequence.json written by a script', () => {
     expect(ctrl.outputPathFor('papers/paper3.pdf')).toBe('output/NOLTA-01.pdf');
     expect(ctrl.outputPathFor('papers/paper2.pdf')).toBe('output/sub/NOLTA-02.pdf');
     expect(ctrl.outputPathFor('papers/paper1.pdf')).toBe('output/paper1_stamped.pdf');
+    // The preflight review copy is the output name plus `_preflight`.
+    expect(ctrl.preflightCopyPathFor('papers/paper3.pdf', 'preflight')).toBe('preflight/NOLTA-01_preflight.pdf');
+    expect(ctrl.preflightCopyPathFor('papers/paper2.pdf', 'preflight')).toBe('preflight/sub/NOLTA-02_preflight.pdf');
+    expect(ctrl.preflightCopyPathFor('papers/paper1.pdf', 'preflight')).toBe('preflight/paper1_stamped_preflight.pdf');
     const gen = await generateStampedPdf(ctrl, 'papers/paper3.pdf');
     expect(gen?.output).toBe('output/NOLTA-01.pdf');
     expect(gen?.job.output).toBe('output/NOLTA-01.pdf');

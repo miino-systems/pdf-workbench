@@ -84,8 +84,11 @@ Workspace 全体の設定です。
 - `directories.papers` は読み取り専用として扱われる元 PDF のディレクトリで、
   アプリは絶対に上書きしません。
 - `directories.preflight`（省略時 `preflight`）は、Preflight タブの一括検査で
-  問題のあった PDF の注釈付きコピー（`<名前>_preflight.pdf`）と
-  `summary.csv` / `summary.json` を保存するディレクトリです。一括検査の
+  問題のあった PDF の注釈付きコピーと
+  `summary.csv` / `summary.json` を保存するディレクトリです。注釈付きコピーの
+  名前は出力ファイル名（`<元ファイル名><suffix>.pdf`，または `sequence.json` の
+  `entries[].output`）の `.pdf` の前に `_preflight` を付けたものです
+  （例: `paper001_stamped_preflight.pdf`，`NOLTA2026-A1-01_preflight.pdf`）．一括検査の
   たびに中身はいったん全て削除されます（途中で中止した場合は、検査済みの
   分だけが残り、`summary.json` に `"cancelled": true` が入ります）。
 - PDF タブの「すべて作り直す」をオンにした全ファイル処理では、`output/` の
@@ -271,7 +274,13 @@ baseline = ページ上端 − offsetY − 0.8 × size
     { "pages": { "kind": "first" }, "margins": { "top": 35 } }
   ],
   "pages": { "min": 1, "max": 6 },
-  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true }
+  "textRules": [
+    { "id": "orcid", "pages": { "kind": "first" }, "require": "ORCID\\s*iDs?", "message": "ORCID 欄がありません" },
+    { "id": "orcid-id", "pages": { "kind": "first" }, "require": "\\d{4}-\\d{4}-\\d{4}-\\d{3}[\\dX]", "message": "ORCID iD が見当たりません" },
+    { "id": "page-number", "forbid": "^\\d{1,3}$|Page \\d+ of \\d+", "flags": "i", "severity": "error", "message": "原稿にページ番号を入れないでください" }
+  ],
+  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true, "stampDuplicate": true,
+              "textOverlap": true, "fonts": true }
 }
 ```
 
@@ -295,13 +304,63 @@ baseline = ページ上端 − offsetY − 0.8 × size
   要素ほど優先**（辺ごとに）されます。
   この上書きは余白チェック（`marginText` / `marginRaster`）と、一括検査の
   注釈付きコピーに描く枠の両方に使われます。
+- `textRules` は、指定したページに**必ずある**（`require`）／**あっては
+  ならない**（`forbid`）テキストを正規表現で書くルールです（`checks` の
+  スイッチはなく、書いてあれば常に実行）。会議・論文誌ごとの決まり
+  （ORCID 欄、キーワード欄、手書きのページ番号の禁止など）を設定だけで
+  足せます。Preflight タブの「テキストルール」でも編集できます。
+  - 照合するテキストは、各ページの文字列を、改行や連続した空白を空白 1 つ
+    にしてつないだものです（同じ行でくっついた文字片はそのままつなぎます）。
+    行末のハイフネーションは残ります。ページをまたいだ一致はしません。
+  - パターンは JavaScript の正規表現で、`u` フラグが常に付きます。
+    `flags` で `i`（大文字小文字を無視）などを足せます。JSON の中では
+    `\` を `\\` と書きます（例: `"ORCID\\s*iDs?"`）。
+  - `require`: `pages`（省略時は全ページ）のどのページにも一致しなければ、
+    その最初のページに `TEXT_REQUIRED:<id>` を報告します（場所がないので
+    注釈付きコピーでは付箋だけ）。
+  - `forbid`: 一致した箇所ごとに `TEXT_FORBIDDEN:<id>` を報告し、注釈付き
+    コピーで赤枠にします。
+  - 1 つのルールに `require` と `forbid` の両方を書くこともできます。
+  - `severity` は既定 `warning`。`error` にすると結果がエラーになります。
+  - `message` は注釈付きコピーのコメントと結果一覧に出る説明です。
+  - 正規表現が正しくないルールは実行されず、文書レベルの警告
+    `TEXT_RULE_INVALID:<id>` になります。
 - `checks`:
   - `marginText`: PDF のテキストオブジェクト座標に基づく余白チェック。
   - `marginRaster`: ラスタライズした画像に基づく余白チェック
     （テキスト以外の描画も検出）。
   - `stampCollision`: スタンプが既存の描画と重ならないかのラスタベースの
-    チェック。新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
-    は 3 つとも `true` です（以前に作った Workspace の preflight.json は
+    チェック。
+  - `stampDuplicate`: 有効なスタンプと同じ内容が原稿にすでに入っていないか
+    （`STAMP_DUPLICATE`）。著者が自分でライセンス表記やロゴを入れていて、
+    スタンプを押すと二重になる場合を見つけます。スタンプを適用するページ
+    だけを調べ、見つかった場所を注釈付きコピーで赤枠にします。
+    - テキストレイヤー: 空白・改行・ハイフン（行末のハイフネーション）を
+      無視した完全一致（複数行なら 20 文字以上の各行も単独で）に加え、
+      5 語以上のテキストは、原稿の連続した部分にその**語の 8 割以上**が
+      あれば重複とみなします（大文字小文字・句読点は無視）。年の違いや
+      「Non-Commercial」と「Non Commercial」のような差があっても見つかります。
+      ページ番号レイヤーは対象外です。
+    - 画像レイヤー: 原稿に埋め込まれた画像を 16×16 に縮小した濃淡の
+      パターンと縦横比で比べるので、大きさや解像度・圧縮が違っても同じ絵
+      なら見つかります。ベクター（線や文字）で描かれたロゴは画像ではない
+      ため対象外で、同じ図柄でも版が違う（例: CC BY と CC BY-NC-ND）もの
+      は別物と判定されます。
+  - `textOverlap`: 別々の文字列が重なって描かれている箇所（`TEXT_OVERLAP`）。
+    ロゴが描けずに文字（例: `orcid`）に化けて隣の文字に重なった、といった
+    表示崩れの兆候を見つけ、注釈付きコピーで重なった側の文字列を赤枠に
+    します。数式の添字・アクセント・演算子のような 1 文字だけの文字列、
+    隣の行と接するだけのもの、字詰めによるわずかな重なり、同じ文字列を
+    ほぼ同じ位置に重ねた疑似ボールドは対象外です（縦に 6 割以上、横に
+    狭い方の幅の 3 割かつ 2pt 以上重なったものだけを報告）。
+  - `fonts`: 埋め込まれていないフォント（`FONT_NOT_EMBEDDED`。閲覧環境の
+    フォントで代用されるので見た目が変わる・文字が化ける原因になります。
+    Helvetica や Times などの標準 14 フォントも含みます）と、Type 3 フォント
+    （`FONT_TYPE3`。古い TeX 環境のビットマップフォントなど）を、フォント
+    ごとに最初に使われたページで 1 回だけ報告します（場所がないので注釈付き
+    コピーでは付箋にフォント名が出ます）。
+  - 新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
+    はすべて `true` です（以前に作った Workspace の preflight.json は
     そのまま）。
 
 ---

@@ -87,6 +87,16 @@ describe('default configs validate against their schema', () => {
     validateAgainst(ajv, PREFLIGHT_SCHEMA_URL, createDefaultPreflightConfig());
   });
 
+  it('a preflight config with text rules (the docs/FORMAT.md example)', () => {
+    validateAgainst(ajv, PREFLIGHT_SCHEMA_URL, {
+      ...createDefaultPreflightConfig(),
+      textRules: [
+        { id: 'orcid', pages: { kind: 'first' }, require: 'ORCID\\s*iDs?', message: 'ORCID 欄がありません' },
+        { id: 'page-number', forbid: '^\\d{1,3}$', flags: 'i', severity: 'error' },
+      ],
+    });
+  });
+
   it('createDefaultJobsConfig() (empty)', () => {
     validateAgainst(ajv, JOBS_SCHEMA_URL, createDefaultJobsConfig());
   });

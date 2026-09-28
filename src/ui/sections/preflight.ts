@@ -8,10 +8,11 @@
  * stamp-collision checks, rendering each page via `PdfRenderer` into an
  * offscreen canvas.
  */
-import type { MarginTolerance, PreflightConfig, PreflightReport } from '@/core/types';
+import type { MarginTolerance, PageSelector, PreflightConfig, PreflightFinding, PreflightReport, PreflightTextRule } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
-import { DEFAULT_MARGIN_TOLERANCE_PT, summarizeReport } from '@/preflight';
+import { DEFAULT_MARGIN_TOLERANCE_PT, describePreflightCode, summarizeReport } from '@/preflight';
+import { parsePageList } from '@/stamps';
 import type { AppController, AppState } from '@/state/app';
 import { loadPreflightSummary, preflightDir, preflightSingle, runPreflightBatch, type PageRaster, type PreflightBatchResult } from '@/state/preflightBatch';
 import type { Section } from '../app';
@@ -64,8 +65,162 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
   if (!c.margins) c.margins = { top: 20, bottom: 20, left: 18, right: 18, unit: 'mm' };
   if (!c.page) c.page = {};
   if (!c.pages) c.pages = {};
-  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false };
+  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false, stampDuplicate: false, textOverlap: false, fonts: false };
   return c;
+}
+
+/**
+ * Codes for the result table: each with its description when that says
+ * more (e.g. a text rule's message), and the detail of problems without a
+ * location (e.g. the font names of `FONT_NOT_EMBEDDED`).
+ */
+function describeCodes(codes: string[], config: PreflightConfig | undefined, findings: PreflightFinding[] = []): string {
+  if (codes.length === 0) return '—';
+  return codes
+    .map((c) => {
+      const d = describePreflightCode(c, config);
+      const label = d === c || /^[A-Z_0-9]+$/.test(c) ? c : `${c}（${d}）`;
+      const detail = [...new Set(findings.filter((f) => f.code === c && !f.rect && f.text).map((f) => f.text!))];
+      return detail.length ? `${label}: ${detail.join(', ')}` : label;
+    })
+    .join(', ');
+}
+
+/** A rule's pages as typed in the editor: empty = all pages, `1`, `1-2`, `1,3`, or `last` / `odd` / `even`. */
+function pagesToText(sel: PageSelector | undefined): string {
+  if (!sel || sel.kind === 'all') return '';
+  if (sel.kind === 'first') return '1';
+  if (sel.kind === 'range') return `${sel.from}-${sel.to}`;
+  if (sel.kind === 'list') return sel.pages.join(',');
+  return sel.kind;
+}
+
+function textToPages(text: string): PageSelector | undefined {
+  const t = text.trim().toLowerCase();
+  if (t === '' || t === 'all') return undefined;
+  if (t === 'first') return { kind: 'first' };
+  if (t === 'last' || t === 'odd' || t === 'even') return { kind: t };
+  return parsePageList(t);
+}
+
+/** Why `pattern` isn't a valid regular expression, or `''`. */
+function regexError(pattern: string, flags: string | undefined): string {
+  try {
+    new RegExp(pattern, `${(flags ?? '').replace(/[gyu]/g, '')}u`);
+    return '';
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
+/**
+ * Editor for `textRules`: one row per rule (id, 必須/禁止, pattern,
+ * ignore case, pages, severity, message). A rule carrying both `require`
+ * and `forbid` (hand-written JSON) edits the one its kind shows and keeps
+ * the other.
+ */
+function buildTextRulesEditor(draft: PreflightConfig, scheduleSave: () => void): HTMLElement {
+  const list = h('div', { class: 'text-rules' });
+  const rules = (): PreflightTextRule[] => (draft.textRules ??= []);
+
+  function row(rule: PreflightTextRule): HTMLElement {
+    const idInput = h('input', { type: 'text', value: rule.id, placeholder: 'orcid', style: 'width:8em' });
+    idInput.addEventListener('input', () => {
+      rule.id = idInput.value.trim();
+      scheduleSave();
+    });
+
+    let kind: 'require' | 'forbid' = rule.require !== undefined || rule.forbid === undefined ? 'require' : 'forbid';
+    const kindSelect = h('select', {}, h('option', { value: 'require' }, '必須'), h('option', { value: 'forbid' }, '禁止'));
+    kindSelect.value = kind;
+
+    const patternInput = h('input', { type: 'text', value: rule[kind] ?? '', placeholder: '正規表現　例: ORCID\\s*iDs?', style: 'flex:1;min-width:14em' });
+    const errorEl = h('span', { class: 'muted' });
+    function validate(): void {
+      const err = patternInput.value ? regexError(patternInput.value, rule.flags) : '';
+      patternInput.setCustomValidity(err);
+      patternInput.title = err;
+      errorEl.textContent = err ? `正規表現エラー: ${err}` : '';
+    }
+    patternInput.addEventListener('input', () => {
+      rule[kind] = patternInput.value;
+      validate();
+      scheduleSave();
+    });
+    kindSelect.addEventListener('change', () => {
+      const pattern = rule[kind];
+      delete rule[kind];
+      kind = kindSelect.value === 'forbid' ? 'forbid' : 'require';
+      rule[kind] = pattern ?? patternInput.value;
+      scheduleSave();
+    });
+
+    const caseCheck = h('input', { type: 'checkbox', checked: (rule.flags ?? '').includes('i') });
+    caseCheck.addEventListener('change', () => {
+      const rest = (rule.flags ?? '').replace(/i/g, '');
+      rule.flags = (caseCheck.checked ? `${rest}i` : rest) || undefined;
+      validate();
+      scheduleSave();
+    });
+
+    const pagesInput = h('input', { type: 'text', value: pagesToText(rule.pages), placeholder: '全ページ', style: 'width:6em' });
+    pagesInput.title = '空欄 = 全ページ．例: 1，1-2，1,3，last，odd，even';
+    pagesInput.addEventListener('input', () => {
+      rule.pages = textToPages(pagesInput.value);
+      if (!rule.pages) delete rule.pages;
+      scheduleSave();
+    });
+
+    const severitySelect = h('select', {}, h('option', { value: 'warning' }, '警告'), h('option', { value: 'error' }, 'エラー'));
+    severitySelect.value = rule.severity ?? 'warning';
+    severitySelect.addEventListener('change', () => {
+      if (severitySelect.value === 'error') rule.severity = 'error';
+      else delete rule.severity;
+      scheduleSave();
+    });
+
+    const messageInput = h('input', { type: 'text', value: rule.message ?? '', placeholder: 'メッセージ　例: ORCID 欄がありません', style: 'flex:1;min-width:14em' });
+    messageInput.addEventListener('input', () => {
+      rule.message = messageInput.value || undefined;
+      scheduleSave();
+    });
+
+    const removeBtn = button('削除', () => {
+      draft.textRules = rules().filter((r) => r !== rule);
+      render();
+      scheduleSave();
+    }, 'btn btn-sm');
+
+    validate();
+    return h(
+      'div',
+      { class: 'text-rule', style: 'margin-bottom:8px' },
+      h('div', { class: 'row' }, field('id', idInput), field('種類', kindSelect), field('パターン', patternInput), h('label', { class: 'row' }, caseCheck, '大小無視')),
+      h('div', { class: 'row' }, field('ページ', pagesInput), field('重さ', severitySelect), field('メッセージ', messageInput), removeBtn),
+      errorEl,
+    );
+  }
+
+  function render(): void {
+    replaceChildren(list, ...rules().map(row));
+  }
+  render();
+
+  return h(
+    'div',
+    null,
+    list,
+    button('ルールを追加', () => {
+      rules().push({ id: `rule${rules().length + 1}`, require: '' });
+      render();
+    }, 'btn btn-sm'),
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      '必須: 指定したページのどこかにパターンに合うテキストがなければ報告（最初のページに付箋）．禁止: 合うテキストがあればその場所を報告．' +
+        'テキストは改行・連続した空白を空白 1 つにしたもの．パターンは JavaScript の正規表現です．',
+    ),
+  );
 }
 
 const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: 'OK', warning: '警告', error: 'エラー' };
@@ -210,6 +365,23 @@ function buildRulesForm(
     scheduleSave();
   });
 
+  const stampDuplicateCheck = h('input', { type: 'checkbox', checked: draft.checks?.stampDuplicate ?? false });
+  stampDuplicateCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, stampDuplicate: stampDuplicateCheck.checked };
+    scheduleSave();
+  });
+
+  const textOverlapCheck = h('input', { type: 'checkbox', checked: draft.checks?.textOverlap ?? false });
+  textOverlapCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, textOverlap: textOverlapCheck.checked };
+    scheduleSave();
+  });
+  const fontsCheck = h('input', { type: 'checkbox', checked: draft.checks?.fonts ?? false });
+  fontsCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, fonts: fontsCheck.checked };
+    scheduleSave();
+  });
+
   return h(
     'div',
     null,
@@ -248,6 +420,8 @@ function buildRulesForm(
     ),
     h('h3', null, 'ページ数'),
     h('div', { class: 'row' }, field('最小', pagesMinInput), field('最大', pagesMaxInput)),
+    h('h3', null, 'テキストルール'),
+    buildTextRulesEditor(draft, scheduleSave),
     h('h3', null, 'チェック項目'),
     h(
       'div',
@@ -255,6 +429,16 @@ function buildRulesForm(
       h('label', { class: 'row' }, marginTextCheck, '余白（テキストベース）'),
       h('label', { class: 'row' }, marginRasterCheck, '余白（描画ベース）'),
       h('label', { class: 'row' }, stampCollisionCheck, 'スタンプ衝突'),
+      h('label', { class: 'row' }, stampDuplicateCheck, 'スタンプ重複'),
+      h('label', { class: 'row' }, textOverlapCheck, '文字の重なり'),
+      h('label', { class: 'row' }, fontsCheck, 'フォント埋め込み'),
+    ),
+    h(
+      'p',
+      { class: 'muted settings-note' },
+      'スタンプ重複: 有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないかを調べます（テキストは語の 8 割以上が一致すれば重複，画像は大きさが違っても同じ絵なら重複）．' +
+        '文字の重なり: 別々の文字列が重なって描かれている箇所（ロゴが文字に化けて重なった等の表示崩れ）を報告します．' +
+        'フォント埋め込み: 埋め込まれていないフォントと Type 3 フォントを，最初に使われたページで報告します．',
     ),
     h('div', { class: 'row', style: 'margin-top:8px' }, button('保存', () => saveNowRef.save(), 'btn btn-primary btn-sm'), statusEl),
   );
@@ -458,8 +642,8 @@ export const preflightSection: Section = {
           'tr',
           null,
           h('td', null, String(p.page)),
-          h('td', null, (p.errors ?? []).join(', ') || '—'),
-          h('td', null, p.warnings.join(', ') || '—'),
+          h('td', null, describeCodes(p.errors ?? [], ws?.preflight, p.findings)),
+          h('td', null, describeCodes(p.warnings, ws?.preflight, p.findings)),
         ),
       );
       replaceChildren(
@@ -475,7 +659,7 @@ export const preflightSection: Section = {
         ),
         h('p', { class: 'muted' }, `file: ${report.file} / sha256: ${report.sha256} / ranAt: ${report.ranAt}`),
         report.documentWarnings.length
-          ? h('div', { class: 'alert warn' }, `文書レベルの警告: ${report.documentWarnings.join(', ')}`)
+          ? h('div', { class: 'alert warn' }, `文書レベルの警告: ${describeCodes(report.documentWarnings, ws?.preflight)}`)
           : null,
         h(
           'table',

@@ -49,20 +49,31 @@ export function stripExtension(path: string): string {
  * always resolved *inside* the output directory (`..` segments are dropped).
  */
 export function outputPathFor(sourcePath: string, config: WorkspaceConfig, outputName?: string): string {
-  const custom = outputName?.trim();
-  if (custom) {
-    const cleaned = custom
-      .replace(/\\/g, '/')
-      .split('/')
-      .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
-      .join('/');
-    if (cleaned) {
-      const withExt = /\.pdf$/i.test(cleaned) ? cleaned : `${cleaned}.pdf`;
-      return joinPath(config.directories.output, withExt);
-    }
-  }
+  const custom = cleanOutputName(outputName);
+  if (custom) return joinPath(config.directories.output, /\.pdf$/i.test(custom) ? custom : `${custom}.pdf`);
   const base = basename(stripExtension(sourcePath));
   return joinPath(config.directories.output, `${base}${config.output.suffix}.pdf`);
+}
+
+/**
+ * Path of the annotated preflight copy of a source PDF: its output name
+ * (see {@link outputPathFor}, sub-directories kept) with `_preflight`
+ * before `.pdf`, inside `dir`, e.g. `preflight/report_stamped_preflight.pdf`
+ * or, with an output name from `sequence.json`, `preflight/NOLTA-01_preflight.pdf`.
+ */
+export function preflightCopyPathFor(sourcePath: string, config: WorkspaceConfig, dir: string, outputName?: string): string {
+  const output = outputPathFor(sourcePath, config, outputName);
+  const relative = output.slice(joinPath(config.directories.output).length).replace(/^\//, '');
+  return joinPath(dir, relative.replace(/\.pdf$/i, '_preflight.pdf'));
+}
+
+/** A per-file output name made relative and safe (`\\` → `/`, no `.`/`..`/empty segments); `''` when unset. */
+function cleanOutputName(outputName?: string): string {
+  return (outputName?.trim() ?? '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((seg) => seg !== '' && seg !== '.' && seg !== '..')
+    .join('/');
 }
 
 /** True when `path` lies inside the configured source (`papers/`) directory. */

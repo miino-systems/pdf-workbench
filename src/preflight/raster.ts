@@ -227,6 +227,6 @@ export function checkStampCollision(
   return {
     collides,
     nonWhiteRatio,
-    message: collides ? '⚠ 既存コンテンツと重なります' : '✓ 空白領域なので配置可能',
+    message: collides ? '既存コンテンツと重なります' : '空白領域なので配置可能',
   };
 }

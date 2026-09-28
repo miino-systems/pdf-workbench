@@ -4,7 +4,8 @@
  */
 import type { AppController, AppState } from '@/state/app';
 import type { TabId } from '@/state/prefs';
-import { button, h, replaceChildren } from './dom';
+import { button, h, iconButton, replaceChildren } from './dom';
+import { icon, type IconName } from './icons';
 
 export interface Section {
   id: TabId;
@@ -21,11 +22,11 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   const tabs = h('nav', { class: 'tabs', attrs: { role: 'tablist' } });
   const main = h('main', { class: 'app-main' });
   const toasts = h('div', { class: 'toasts' });
-  const busy = h('span', { class: 'muted' });
+  const busy = h('span', { class: 'muted busy-indicator' });
   const wsLabel = h('span', { class: 'muted' });
-  const undoBtn = button('↶', () => void ctrl.undo(), 'btn btn-sm');
-  const redoBtn = button('↷', () => void ctrl.redo(), 'btn btn-sm');
-  const reloadBtn = button('🔄 更新', () => void ctrl.reloadWorkspace(), 'btn btn-sm');
+  const undoBtn = iconButton('undo', '元に戻す', () => void ctrl.undo());
+  const redoBtn = iconButton('redo', 'やり直す', () => void ctrl.redo());
+  const reloadBtn = button('更新', () => void ctrl.reloadWorkspace(), 'btn btn-sm', 'refresh-cw');
 
   const header = h(
     'header',
@@ -36,7 +37,7 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     h('span', { class: 'spacer' }),
     busy,
     h('span', { class: 'row header-actions' }, undoBtn, redoBtn, reloadBtn),
-    h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, '🔒 ', PRIVACY_NOTICE),
+    h('span', { class: 'privacy-notice', title: PRIVACY_NOTICE }, icon('lock'), PRIVACY_NOTICE),
   );
 
   const footer = h(
@@ -89,7 +90,8 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
         h(
           'div',
           { class: `toast ${t.kind}`, on: { click: () => ctrl.dismissToast(t.id) }, attrs: { role: 'status' } },
-          t.text,
+          icon(TOAST_ICON[t.kind]),
+          h('span', null, t.text),
         ),
       ),
     );
@@ -112,11 +114,12 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
     applyTheme(state);
     showTab(state.prefs.lastTab);
     const p = state.progress;
-    busy.textContent = p
-      ? `⏳ ${p.label} ${p.done}/${p.total}（${Math.floor((p.done / Math.max(1, p.total)) * 100)}%）`
+    const busyText = p
+      ? `${p.label} ${p.done}/${p.total}（${Math.floor((p.done / Math.max(1, p.total)) * 100)}%）`
       : state.busy
-        ? `⏳ ${state.busy}…`
+        ? `${state.busy}…`
         : '';
+    replaceChildren(busy, busyText ? [icon('loader', { className: 'icon-spin' }), busyText] : []);
     wsLabel.textContent = state.workspace ? `Workspace: ${state.workspace.config.name}/` : '';
     renderActions(state);
     renderToasts(state);
@@ -139,6 +142,13 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
 }
 
 const EXTERNAL_CHECK_INTERVAL_MS = 4000;
+
+const TOAST_ICON: Record<AppState['toasts'][number]['kind'], IconName> = {
+  ok: 'circle-check',
+  info: 'info',
+  warn: 'triangle-alert',
+  err: 'circle-x',
+};
 
 function isMac(): boolean {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);

@@ -100,9 +100,9 @@ export const historySection: Section = {
         h(
           'div',
           { class: 'row' },
-          button('🔄 再読み込み', () => void ctrl.refreshEvents(), 'btn btn-sm'),
+          button('再読み込み', () => void ctrl.refreshEvents(), 'btn btn-sm', 'refresh-cw'),
           button(
-            '📸 Snapshot を保存',
+            'Snapshot を保存',
             () => {
               const reason = window.prompt('保存理由', '手動保存');
               if (reason === null) return;
@@ -114,6 +114,7 @@ export const historySection: Section = {
               });
             },
             'btn btn-sm',
+            'camera',
           ),
         ),
       );
@@ -153,8 +154,8 @@ export const historySection: Section = {
               'div',
               { class: `alert ${verifyResult.ok ? 'ok' : 'err'}` },
               verifyResult.ok
-                ? '✓ hash chain は正しく検証されました'
-                : `✗ hash chain が壊れています（index ${verifyResult.brokenAt}）`,
+                ? 'hash chain は正しく検証されました'
+                : `hash chain が壊れています（index ${verifyResult.brokenAt}）`,
             ),
           );
         }

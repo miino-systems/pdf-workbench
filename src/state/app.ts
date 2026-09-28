@@ -59,7 +59,25 @@ export type FileStatus =
   | 'error'
   | 'source-changed'
   | 'numbering-changed'
-  | 'stamps-changed';
+  | 'stamps-changed'
+  | 'output-changed';
+
+/**
+ * Generated before, but something it depends on has changed since (source
+ * PDF, page numbering, stamps, output name): the output is stale and should
+ * be regenerated.
+ */
+export const NEEDS_UPDATE_STATUSES: ReadonlySet<FileStatus> = new Set<FileStatus>([
+  'source-changed',
+  'numbering-changed',
+  'stamps-changed',
+  'output-changed',
+]);
+
+/** Generated and still up to date (possibly with warnings). */
+export function isUpToDate(status: FileStatus): boolean {
+  return status === 'processed' || status === 'warning';
+}
 
 export interface PdfFileItem extends WorkspaceFileEntry {
   status: FileStatus;
@@ -292,7 +310,7 @@ export class AppController {
   }
 
   /**
-   * Re-read the open workspace from disk (Cmd+R / 🔄): picks up files and
+   * Re-read the open workspace from disk (Cmd+R / the header's 更新 button): picks up files and
    * `.pdf-workbench/*.json` edited outside the app, keeping the selected PDF
    * and page. With no workspace open, reopens the most recently used one.
    */
@@ -304,7 +322,7 @@ export class AppController {
       if (selectedFile && this.state.files.some((f) => f.path === selectedFile)) {
         await this.selectFile(selectedFile, currentPage);
       }
-      this.toast('ok', `🔄 「${workspace.config.name}」を再読み込みしました`);
+      this.toast('ok', `「${workspace.config.name}」を再読み込みしました`);
       return;
     }
     await this.refreshRecent();
@@ -314,7 +332,7 @@ export class AppController {
       return;
     }
     await this.openRecent(latest);
-    if (this.state.workspaceHandle === latest.handle) this.toast('ok', `🔄 「${latest.name}」を開きました`);
+    if (this.state.workspaceHandle === latest.handle) this.toast('ok', `「${latest.name}」を開きました`);
   }
 
   /**
@@ -420,7 +438,13 @@ export class AppController {
   private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string, sequence = this.state.sequence): FileStatus {
     const item = sequenceItemFor(sequence, path);
     const ws = this.state.workspace;
-    return computeStatus(job, hash, item ? { pageStart: item.pageStart } : undefined, ws ? stampsFingerprint(ws.stamps) : undefined);
+    return computeStatus(
+      job,
+      hash,
+      item ? { pageStart: item.pageStart } : undefined,
+      ws ? stampsFingerprint(ws.stamps) : undefined,
+      ws ? this.outputPathFor(path) : undefined,
+    );
   }
 
   /** Recompute every file's status (after stamps.json or jobs.json changed). */
@@ -547,7 +571,7 @@ export class AppController {
       }));
       const item = this.state.files.find((f) => f.path === path);
       if (item?.status === 'source-changed') {
-        this.toast('warn', '⚠ 元 PDF が前回処理時から変更されています');
+        this.toast('warn', '元 PDF が前回処理時から変更されています');
       }
     });
   }
@@ -976,7 +1000,7 @@ export class AppController {
       return;
     }
     await this.log(dir === 'undo' ? EVENT_TYPES.undo : EVENT_TYPES.redo, { label: entry.label });
-    this.toast('info', dir === 'undo' ? `↶ 元に戻しました: ${entry.label}` : `↷ やり直しました: ${entry.label}`, 3000);
+    this.toast('info', dir === 'undo' ? `元に戻しました: ${entry.label}` : `やり直しました: ${entry.label}`, 3000);
   }
 
   // ------------------------------------------------------------- history
@@ -1063,23 +1087,28 @@ export function computeStatus(
   currentHash: string | undefined,
   numbering?: { pageStart?: number },
   stampsHash?: string,
+  outputPath?: string,
 ): FileStatus {
   if (!job) return 'not-processed';
   if (currentHash && job.sourceHash !== currentHash) return 'source-changed';
   if (numbering && job.pageStart !== undefined && job.pageStart !== numbering.pageStart) return 'numbering-changed';
   // Jobs from before stamps fingerprints were recorded are never flagged.
   if (stampsHash && job.stampsHash && job.stampsHash !== stampsHash) return 'stamps-changed';
+  // e.g. a re-imported CSV renamed the output.
+  if (outputPath && job.output !== outputPath) return 'output-changed';
   if (job.status === 'error') return 'error';
   if (job.status === 'warning') return 'warning';
   return 'processed';
 }
 
+/** How each status is shown: `icon` names an icon in `ui/icons.ts`, `cls` its colour. */
 export const STATUS_LABEL: Record<FileStatus, { icon: string; text: string; cls: string }> = {
-  'not-processed': { icon: '○', text: 'Not processed', cls: 'muted' },
-  processed: { icon: '✓', text: 'Processed', cls: 'ok' },
-  warning: { icon: '⚠', text: 'Warning', cls: 'warn' },
-  error: { icon: '✗', text: 'Error', cls: 'err' },
-  'source-changed': { icon: '⚠', text: 'Source changed', cls: 'warn' },
-  'numbering-changed': { icon: '⚠', text: 'Page numbers changed', cls: 'warn' },
-  'stamps-changed': { icon: '⚠', text: '古い出力（生成後にスタンプ設定が変更されました）', cls: 'warn' },
+  'not-processed': { icon: 'circle', text: '未処理', cls: 'muted' },
+  processed: { icon: 'circle-check', text: '処理済み（最新）', cls: 'ok' },
+  warning: { icon: 'triangle-alert', text: '処理済み（警告あり）', cls: 'warn' },
+  error: { icon: 'circle-x', text: 'エラー', cls: 'err' },
+  'source-changed': { icon: 'refresh-cw', text: '要更新: 元 PDF が変更されました', cls: 'update' },
+  'numbering-changed': { icon: 'refresh-cw', text: '要更新: 通しページ番号が変わりました', cls: 'update' },
+  'stamps-changed': { icon: 'refresh-cw', text: '要更新: 生成後にスタンプ設定が変更されました', cls: 'update' },
+  'output-changed': { icon: 'refresh-cw', text: '要更新: 出力ファイル名が変わりました（CSV の取り込みなど）', cls: 'update' },
 };

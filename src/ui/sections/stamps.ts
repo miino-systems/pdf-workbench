@@ -47,7 +47,8 @@ import {
 import type { AppController, AppState } from '@/state/app';
 import type { Section } from '../app';
 import { createFontPicker } from '../components/fontPicker';
-import { button, h, replaceChildren } from '../dom';
+import { button, h, iconButton, replaceChildren } from '../dom';
+import { icon } from '../icons';
 
 const LAYER_TYPE_LABELS: Record<string, string> = {
   text: 'テキスト',
@@ -459,12 +460,12 @@ function buildImageFields(ctrl: AppController, layer: ImageLayer, scheduleSave: 
     if (!layer.src) {
       message = h('div', { class: 'alert warn' }, '画像パスが未指定です');
     } else if (!(await wsNow.fs.exists(layer.src))) {
-      message = h('div', { class: 'alert warn' }, `⚠ ${layer.src} が見つかりません．${wsNow.config.directories.assets}/ に置いてください（このままでは生成時にエラーになります）`);
+      message = h('div', { class: 'alert warn' }, icon('triangle-alert'), `${layer.src} が見つかりません．${wsNow.config.directories.assets}/ に置いてください（このままでは生成時にエラーになります）`);
     } else {
       natural = imageNaturalSize(await wsNow.fs.readBytes(layer.src));
       message = natural
         ? h('p', { class: 'muted settings-note' }, `元画像 ${natural.width}×${natural.height} px（縦横比 ${round(natural.width / natural.height, 2)} : 1）`)
-        : h('div', { class: 'alert warn' }, `⚠ ${layer.src} は PNG / JPEG として読めません`);
+        : h('div', { class: 'alert warn' }, icon('triangle-alert'), `${layer.src} は PNG / JPEG として読めません`);
     }
     if (seq !== checkSeq) return;
     const aspect = natural ? imageAspectWarning(layer, natural) : undefined;
@@ -475,7 +476,8 @@ function buildImageFields(ctrl: AppController, layer: ImageLayer, scheduleSave: 
         ? h(
             'div',
             { class: 'alert warn' },
-            `⚠ ${aspect} `,
+            icon('triangle-alert'),
+            `${aspect} `,
             button(
               '高さを空にして縦横比を保つ',
               () => {
@@ -641,8 +643,9 @@ function renderLayerRow(
     { class: 'layer-header' },
     h('span', { class: 'type' }, LAYER_TYPE_LABELS[layer.type] ?? layer.type),
     h('span', { style: 'flex:1' }),
-    button(
-      '↑',
+    iconButton(
+      'arrow-up',
+      '上へ',
       () => {
         if (index === 0) return;
         const arr = draft.layers;
@@ -650,10 +653,10 @@ function renderLayerRow(
         scheduleSave();
         rebuildLayers();
       },
-      'btn btn-sm',
     ),
-    button(
-      '↓',
+    iconButton(
+      'arrow-down',
+      '下へ',
       () => {
         const arr = draft.layers;
         if (index === arr.length - 1) return;
@@ -661,10 +664,10 @@ function renderLayerRow(
         scheduleSave();
         rebuildLayers();
       },
-      'btn btn-sm',
     ),
-    button(
-      '✕',
+    iconButton(
+      'trash',
+      'レイヤーを削除',
       () => {
         draft.layers.splice(index, 1);
         scheduleSave();
@@ -871,9 +874,10 @@ export const stampsSection: Section = {
             h(
               'button',
               {
-                class: 'btn btn-sm',
+                class: 'btn btn-sm btn-icon',
                 type: 'button',
-                title: '削除',
+                title: 'スタンプを削除',
+                attrs: { 'aria-label': 'スタンプを削除' },
                 on: {
                   click: (ev) => {
                     ev.stopPropagation();
@@ -884,7 +888,7 @@ export const stampsSection: Section = {
                   },
                 },
               },
-              '✕',
+              icon('trash'),
             ),
           );
         }),
@@ -948,13 +952,14 @@ export const stampsSection: Section = {
         { class: 'row' },
         (['text', 'image', 'pageNumber'] as const).map((type) =>
           button(
-            `＋ ${type}`,
+            type,
             () => {
               d.layers.push(newLayer(type));
               scheduleSave();
               rebuildLayers();
             },
             'btn btn-sm',
+            'plus',
           ),
         ),
       );
@@ -1009,7 +1014,7 @@ export const stampsSection: Section = {
           ? h(
               'div',
               { class: 'row position-source' },
-              h('span', { class: 'badge warn', title: 'stamps.json の instances[].position' }, '📌 独自の位置'),
+              h('span', { class: 'badge warn', title: 'stamps.json の instances[].position' }, icon('pin'), '独自の位置'),
               h('span', { class: 'muted' }, `既定位置は ${describePosition(defaultPos, ctrl.state.prefs.unit)}`),
               button('既定位置に戻す', () => savePlacement(ctrl.resetInstancePosition(inst.id), status), 'btn btn-sm'),
             )
@@ -1028,7 +1033,7 @@ export const stampsSection: Section = {
             h('label', { class: 'row' }, enabledCheckbox, placements.length > 1 ? `配置 ${idx + 1}` : '有効'),
             status,
             h('span', { style: 'flex:1' }),
-            button('✕', () => void ctrl.removeInstance(inst.id), 'btn btn-sm btn-danger'),
+            iconButton('trash', 'この配置を削除', () => void ctrl.removeInstance(inst.id), 'btn btn-sm btn-icon btn-danger'),
           ),
           h('div', { class: 'placement-body' }, field('ページ', pagesEditor), field('位置', h('div', null, positionSource, posEditor))),
         );
@@ -1036,10 +1041,10 @@ export const stampsSection: Section = {
 
       replaceChildren(
         placementsPanel,
-        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', null, def.name), button('＋ 配置を追加', () => addPlacement(), 'btn btn-sm')),
+        h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', null, def.name), button('配置を追加', () => addPlacement(), 'btn btn-sm', 'plus')),
         placements.length
           ? cards
-          : h('div', { class: 'alert warn' }, '配置がないため，このスタンプは PDF に適用されません。「＋ 配置を追加」で追加してください。'),
+          : h('div', { class: 'alert warn' }, '配置がないため，このスタンプは PDF に適用されません。「配置を追加」で追加してください。'),
         placements.length === 1
           ? h('p', { class: 'muted settings-note' }, '同じスタンプをページごとに違う位置へ置く場合（例: 奇数ページは右下・偶数ページは左下）は配置を追加します。')
           : '',

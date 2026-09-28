@@ -14,13 +14,30 @@ import { PdfRenderer, canvasToPdf, pdfToCanvas } from '@/pdf/renderer';
 import { StampMetrics, measureLayers, type Box } from '@/pdf/stamper';
 import { describeRange, sequenceItemFor } from '@/sequence';
 import { describePageSelector, effectivePosition, invertStampOrigin, resolvePages, stampRect } from '@/stamps';
-import { STATUS_LABEL, type AppState, type PdfFileItem } from '@/state/app';
+import { NEEDS_UPDATE_STATUSES, STATUS_LABEL, isUpToDate, type AppState, type FileStatus, type PdfFileItem } from '@/state/app';
 import { createFontResolver, generateStampedPdf } from '@/state/generate';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
-import { button, formatBytes, h, replaceChildren } from '../dom';
+import { button, formatBytes, h, iconButton, replaceChildren } from '../dom';
+import { icon, type IconName } from '../icons';
 
 const ZOOM_OPTIONS = [50, 75, 100, 150, 200];
+
+/**
+ * File list groups, in display order: work still to do first, files whose
+ * output is current at the bottom (so the list reads as a to-do list).
+ */
+const FILE_GROUPS: { id: string; label: string; test: (s: FileStatus) => boolean }[] = [
+  { id: 'update', label: '要更新', test: (s) => NEEDS_UPDATE_STATUSES.has(s) },
+  { id: 'error', label: 'エラー', test: (s) => s === 'error' },
+  { id: 'todo', label: '未処理', test: (s) => s === 'not-processed' },
+  { id: 'done', label: '最新', test: isUpToDate },
+];
+
+/** Files that 全ファイルを処理 regenerates: everything not up to date (or everything, when forced). */
+function filesToProcess(files: PdfFileItem[], all: boolean): PdfFileItem[] {
+  return all ? files : files.filter((f) => !isUpToDate(f.status));
+}
 
 /**
  * The number a page-number stamp would show on physical page `page` of the
@@ -61,8 +78,8 @@ export const pdfSection: Section = {
       },
     });
     const pageCountLabel = h('span', { class: 'muted' }, '/ 0');
-    const prevBtn = button('◀', () => ctrl.setPage(ctrl.state.currentPage - 1), 'btn btn-sm');
-    const nextBtn = button('▶', () => ctrl.setPage(ctrl.state.currentPage + 1), 'btn btn-sm');
+    const prevBtn = iconButton('chevron-left', '前のページ', () => ctrl.setPage(ctrl.state.currentPage - 1));
+    const nextBtn = iconButton('chevron-right', '次のページ', () => ctrl.setPage(ctrl.state.currentPage + 1));
 
     const zoomSelect = h(
       'select',
@@ -375,11 +392,23 @@ export const pdfSection: Section = {
 
     function renderFiles(state: AppState): void {
       const ws = state.workspace;
+      const groups = FILE_GROUPS.map((g) => ({ ...g, files: state.files.filter((f) => g.test(f.status)) }));
       replaceChildren(
         filesHeader,
         h('h2', null, 'PDF Files', ws && state.files.length ? h('span', { class: 'muted' }, ` (${state.files.length})`) : ''),
-        ws ? button('🔄 再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm') : '',
+        ws ? button('再読み込み', () => void ctrl.refreshFiles(), 'btn btn-sm', 'refresh-cw') : '',
+        ws && state.files.length
+          ? h(
+              'div',
+              { class: 'file-counts' },
+              groups.filter((g) => g.files.length).map((g) => h('span', { class: `file-count ${g.id}` }, `${g.label} ${g.files.length}`)),
+            )
+          : '',
       );
+      // Within a group keep the numbering order (sequence), else name order.
+      const orderIndex = new Map((state.sequence?.items ?? []).map((it, i) => [it.file, i]));
+      const byOrder = (a: PdfFileItem, b: PdfFileItem): number =>
+        (orderIndex.get(a.path) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(b.path) ?? Number.MAX_SAFE_INTEGER);
       const children: (HTMLElement | string)[] = [];
       if (!ws) {
         children.push(
@@ -391,26 +420,33 @@ export const pdfSection: Section = {
         children.push(
           h(
             'ul',
-            { class: 'list' },
-            state.files.map((f) => {
+            { class: 'list file-list' },
+            groups.flatMap((g) => [
+              g.files.length && groups.some((o) => o !== g && o.files.length)
+                ? h('li', { class: `file-group ${g.id}`, attrs: { role: 'presentation' } }, `${g.label}（${g.files.length}）`)
+                : '',
+              ...[...g.files].sort(byOrder).map((f) => {
               const label = STATUS_LABEL[f.status];
               const range = sequenceItemFor(state.sequence, f.path);
               return h(
                 'li',
                 {
+                  class: g.id === 'update' ? 'needs-update' : '',
                   dataset: { path: f.path },
                   attrs: { role: 'option', 'aria-selected': String(f.path === state.selectedFile) },
                   title: label.text,
                   on: { click: () => void ctrl.selectFile(f.path) },
                 },
-                h('span', { class: `badge ${label.cls}` }, label.icon),
+                h('span', { class: `status-icon ${label.cls}` }, icon(label.icon as IconName, { label: label.text })),
                 h('span', { class: 'name' }, f.name),
+                g.id === 'update' ? h('span', { class: 'update-chip' }, '要更新') : '',
                 range && !range.skipped && range.pageStart !== undefined
                   ? h('span', { class: 'muted mono', title: '通しページ番号（Sequence タブ）' }, describeRange(range))
                   : '',
                 h('span', { class: 'muted' }, formatBytes(f.size)),
               );
-            }),
+              }),
+            ]),
           ),
         );
       }
@@ -472,7 +508,7 @@ export const pdfSection: Section = {
                   checkbox,
                   h('span', { class: 'name' }, def?.name ?? inst.stampId),
                   inst.position
-                    ? h('span', { title: '独自の位置（ドラッグ等で設定）: 定義の既定位置より優先されます．Stamps タブで既定位置に戻せます' }, '📌')
+                    ? h('span', { class: 'muted', title: '独自の位置（ドラッグ等で設定）: 定義の既定位置より優先されます．Stamps タブで既定位置に戻せます' }, icon('pin', { label: '独自の位置' }))
                     : '',
                 ),
                 h('span', { class: 'muted' }, describePageSelector(inst.pages)),
@@ -492,7 +528,7 @@ export const pdfSection: Section = {
         children.push(h('p', { class: 'muted' }, 'ファイルを選択してください．'));
       } else {
         if (file?.status === 'source-changed') {
-          children.push(h('div', { class: 'alert warn' }, '⚠ 元 PDF が前回処理時から変更されています'));
+          children.push(h('div', { class: 'alert warn' }, icon('triangle-alert'), '元 PDF が前回処理時から変更されています'));
         }
         const job = file?.job;
         if (!job) {
@@ -534,11 +570,16 @@ export const pdfSection: Section = {
       return { enabled, disabled };
     }
 
+    /** 全ファイルを処理 also regenerates up-to-date files (off: only what needs work). */
+    let regenerateAll = false;
+
     async function runBatch(): Promise<void> {
-      const paths = ctrl.state.files.map((f) => f.path);
+      const paths = filesToProcess(ctrl.state.files, regenerateAll).map((f) => f.path);
+      if (paths.length === 0) return;
+      const skipped = ctrl.state.files.length - paths.length;
       const { enabled, disabled } = stampSummary(ctrl.state);
       const message =
-        `${paths.length} 件の PDF に次のスタンプを付けて生成します．\n\n` +
+        `${paths.length} 件の PDF に次のスタンプを付けて生成します${skipped ? `（最新の ${skipped} 件はそのまま）` : ''}．\n\n` +
         `有効:\n${enabled.map((n) => `  ・${n}`).join('\n')}` +
         (disabled.length ? `\n\n無効（付きません）:\n${disabled.map((n) => `  ・${n}`).join('\n')}` : '') +
         '\n\nよろしいですか？';
@@ -580,7 +621,8 @@ export const pdfSection: Section = {
       const { enabled, disabled } = stampSummary(state);
       const hasEnabled = enabled.length > 0;
       const generateDisabled = !ws || !state.selectedFile || !hasEnabled || !!state.busy;
-      const batchDisabled = !ws || state.files.length === 0 || !hasEnabled || !!state.busy;
+      const pending = filesToProcess(state.files, regenerateAll).length;
+      const batchDisabled = !ws || pending === 0 || !hasEnabled || !!state.busy;
 
       const generateBtn = h(
         'button',
@@ -603,8 +645,23 @@ export const pdfSection: Section = {
         },
         'Generate PDF',
       );
-      const batchBtn = h('button', { class: 'btn', type: 'button', disabled: batchDisabled, on: { click: () => void runBatch() } }, '全ファイルを処理');
-      const outputsBtn = h('button', { class: 'btn', type: 'button', disabled: !ws, on: { click: () => void openOutputs() } }, '📂 出力フォルダ');
+      const batchBtn = button(
+        regenerateAll ? `全ファイルを処理（${pending} 件）` : `更新が必要なファイルを処理（${pending} 件）`,
+        () => void runBatch(),
+        'btn',
+        'refresh-cw',
+      );
+      batchBtn.disabled = batchDisabled;
+      batchBtn.title = regenerateAll
+        ? 'すべてのファイルを作り直します'
+        : '未処理・要更新・エラーのファイルだけを生成します（最新のものはそのまま）';
+      const allCheckbox = h('input', { type: 'checkbox', checked: regenerateAll });
+      allCheckbox.addEventListener('change', () => {
+        regenerateAll = allCheckbox.checked;
+        renderActions(ctrl.state);
+      });
+      const outputsBtn = button('出力フォルダ', () => void openOutputs(), 'btn', 'folder-open');
+      outputsBtn.disabled = !ws;
 
       const p = state.progress;
       const pct = p ? Math.floor((p.done / Math.max(1, p.total)) * 100) : 0;
@@ -629,6 +686,7 @@ export const pdfSection: Section = {
             )
           : '',
         h('div', { class: 'row' }, generateBtn, batchBtn, outputsBtn),
+        ws ? h('label', { class: 'row muted settings-note', style: 'margin-top:6px' }, allCheckbox, '最新のファイルも作り直す') : '',
       );
     }
 

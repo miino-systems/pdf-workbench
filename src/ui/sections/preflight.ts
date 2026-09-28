@@ -70,7 +70,7 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
   return c;
 }
 
-const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: '✓ OK', warning: '⚠ Warning', error: '✗ Error' };
+const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: 'OK', warning: '警告', error: 'エラー' };
 const SEVERITY_CLASS: Record<PreflightReport['result'], string> = { ok: 'ok', warning: 'warn', error: 'err' };
 
 async function runRasterMarginChecks(bytes: Uint8Array, config: PreflightConfig, report: PreflightReport): Promise<void> {

@@ -51,3 +51,23 @@ describe('stale outputs', () => {
     expect(computeStatus(job, 'h', undefined, 'stamps:0000000000000000')).toBe('processed');
   });
 });
+
+describe('output name changes', () => {
+  it('marks a file as needing an update when a re-imported CSV renames its output', async () => {
+    const ctrl = new AppController();
+    await ctrl.openHandle(createMemoryDirectory('ws'));
+    await ctrl.initializePendingWorkspace();
+    const ws = ctrl.requireWorkspace();
+    await ws.fs.writeBytes('papers/a.pdf', await buildFixturePdf([{ size: [300, 300] }]));
+    await ctrl.refreshFiles();
+    await ctrl.setInstanceEnabled(ws.stamps.instances[0].id, true);
+    await generateStampedPdf(ctrl, 'papers/a.pdf');
+    expect(ctrl.state.files[0].status).toBe('processed');
+
+    await ctrl.updateSequence((cfg) => ({ ...cfg, entries: [{ file: 'papers/a.pdf', output: 'A1-01.pdf' }] }));
+    expect(ctrl.state.files[0].status).toBe('output-changed');
+    const { NEEDS_UPDATE_STATUSES, isUpToDate } = await import('@/state/app');
+    expect(NEEDS_UPDATE_STATUSES.has('output-changed')).toBe(true);
+    expect(isUpToDate('output-changed')).toBe(false);
+  });
+});

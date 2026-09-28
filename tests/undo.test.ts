@@ -60,7 +60,7 @@ describe('AppController undo / redo', () => {
     await ctrl.undo();
     expect(ctrl.requireWorkspace().sequence.firstPage).toBe(1);
     expect(JSON.parse(await ws.fs.readText(WORKBENCH_FILES.sequence)).firstPage).toBe(1);
-    expect(ctrl.state.toasts.at(-1)?.text).toBe('↶ 元に戻しました: 通し番号の設定を変更');
+    expect(ctrl.state.toasts.at(-1)?.text).toBe('元に戻しました: 通し番号の設定を変更');
 
     await ctrl.undo();
     expect(ctrl.requireWorkspace().stamps.instances[0].enabled).toBe(false);
@@ -69,7 +69,7 @@ describe('AppController undo / redo', () => {
 
     await ctrl.redo();
     expect(ctrl.requireWorkspace().stamps.instances[0].enabled).toBe(true);
-    expect(ctrl.state.toasts.at(-1)?.text).toBe(`↷ やり直しました: スタンプを有効化（${name}）`);
+    expect(ctrl.state.toasts.at(-1)?.text).toBe(`やり直しました: スタンプを有効化（${name}）`);
 
     const events = (await ws.fs.readText(WORKBENCH_FILES.events)).split('\n').filter(Boolean).map((l) => JSON.parse(l).type);
     expect(events.filter((t) => t === 'history.undo')).toHaveLength(2);

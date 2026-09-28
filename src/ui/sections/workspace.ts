@@ -8,6 +8,7 @@ import { WORKBENCH_DIR } from '@/core/types';
 import { isLocalFontAccessSupported } from '@/workspace';
 import type { Section } from '../app';
 import { button, copyToClipboard, h, replaceChildren } from '../dom';
+import { icon } from '../icons';
 
 export const workspaceSection: Section = {
   id: 'workspace',
@@ -45,7 +46,7 @@ export const workspaceSection: Section = {
           h(
             'div',
             { class: 'row' },
-            button('📂 ディレクトリを選択', () => void ctrl.pickAndOpenWorkspace(), 'btn btn-primary'),
+            button('ディレクトリを選択', () => void ctrl.pickAndOpenWorkspace(), 'btn btn-primary', 'folder-open'),
             state.workspace ? button('閉じる', () => ctrl.closeWorkspace()) : '',
           ),
         );
@@ -62,7 +63,7 @@ export const workspaceSection: Section = {
             h(
               'div',
               { class: 'row', style: 'margin-top:8px' },
-              button('✨ 新しい Workspace として初期化', () => void ctrl.initializePendingWorkspace(), 'btn btn-primary'),
+              button('新しい Workspace として初期化', () => void ctrl.initializePendingWorkspace(), 'btn btn-primary', 'folder-plus'),
               button('キャンセル', () => ctrl.closeWorkspace()),
             ),
             h(
@@ -85,14 +86,16 @@ export const workspaceSection: Section = {
               h(
                 'li',
                 { on: { click: () => void ctrl.openRecent(r) } },
-                h('span', { class: 'name' }, '📁 ', r.name),
+                icon('folder'),
+                h('span', { class: 'name' }, r.name),
                 h('span', { class: 'muted' }, new Date(r.lastOpened).toLocaleString()),
                 h(
                   'button',
                   {
-                    class: 'btn btn-sm',
+                    class: 'btn btn-sm btn-icon',
                     type: 'button',
                     title: '一覧から削除',
+                    attrs: { 'aria-label': '一覧から削除' },
                     on: {
                       click: (ev) => {
                         ev.stopPropagation();
@@ -100,7 +103,7 @@ export const workspaceSection: Section = {
                       },
                     },
                   },
-                  '✕',
+                  icon('x'),
                 ),
               ),
             ),

@@ -135,7 +135,7 @@ describe('preflight/raster', () => {
     // PDF-space rect near the bottom-left corner, far from the black block near the top.
     const result = checkStampCollision(image, pageSize, { x: 10, y: 10, width: 20, height: 20 });
     expect(result.collides).toBe(false);
-    expect(result.message).toBe('✓ 空白領域なので配置可能');
+    expect(result.message).toBe('空白領域なので配置可能');
   });
 
   it('checkStampCollision reports a collision when the rect overlaps existing content', () => {
@@ -143,7 +143,7 @@ describe('preflight/raster', () => {
     // PDF-space rect near the top of the page (y close to pageSize.height), overlapping the block.
     const result = checkStampCollision(image, pageSize, { x: 60, y: 185, width: 20, height: 15 });
     expect(result.collides).toBe(true);
-    expect(result.message).toBe('⚠ 既存コンテンツと重なります');
+    expect(result.message).toBe('既存コンテンツと重なります');
   });
 });
 

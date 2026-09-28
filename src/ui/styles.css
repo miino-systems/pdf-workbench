@@ -117,6 +117,30 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 12px 0; }
 details.panel > summary { cursor: pointer; font-weight: 600; }
 details.panel[open] > summary { margin-bottom: 8px; }
 
+/* Icons (inline SVG, see ui/icons.ts) */
+.icon { width: 1.15em; height: 1.15em; flex: none; vertical-align: -0.2em; }
+.btn .icon { width: 1.1em; height: 1.1em; }
+.btn-icon { padding: 3px 5px; }
+.btn-sm.btn-icon .icon { width: 14px; height: 14px; }
+.icon-spin { animation: icon-spin 1s linear infinite; }
+@keyframes icon-spin { to { transform: rotate(360deg); } }
+.status-icon { display: inline-flex; width: 18px; justify-content: center; }
+.status-icon.ok { color: var(--ok); }
+.status-icon.warn { color: var(--warn); }
+.status-icon.err { color: var(--err); }
+.status-icon.muted { color: var(--muted); }
+.status-icon.update { color: var(--accent); }
+.badge .icon { width: 12px; height: 12px; vertical-align: -2px; margin-right: 2px; }
+.alert .icon { color: var(--warn); margin-right: 4px; }
+.privacy-notice { display: inline-flex; align-items: center; gap: 5px; }
+.toast { display: flex; gap: 8px; align-items: flex-start; }
+.toast > .icon { margin-top: 2px; }
+.toast.ok > .icon { color: var(--ok); }
+.toast.warn > .icon { color: var(--warn); }
+.toast.err > .icon { color: var(--err); }
+.toast.info > .icon { color: var(--accent); }
+.busy-indicator { display: inline-flex; align-items: center; gap: 6px; }
+
 /* Controls */
 .btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -232,11 +256,11 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .scroll-col { min-height: 0; overflow-y: auto; }
 
 /* pdf section: only the file list and preview scroll */
-.pdf-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.pdf-sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow-y: auto; }
 .pdf-sidebar > .panel { margin-top: 0; flex: 0 0 auto; }
-.pdf-sidebar > .pdf-files { flex: 1 1 auto; min-height: 140px; display: flex; flex-direction: column; }
+.pdf-sidebar > .pdf-files { flex: 1 0 280px; min-height: 280px; display: flex; flex-direction: column; }
 .pdf-files-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
-.pdf-sidebar > .pdf-stamps { max-height: 30vh; overflow-y: auto; }
+.pdf-sidebar > .pdf-stamps { max-height: 24vh; overflow-y: auto; }
 .pdf-sidebar > .panel h2 { margin-bottom: 6px; }
 .pdf-sidebar .list li { padding: 4px 8px; }
 .pdf-preview { display: flex; flex-direction: column; min-height: 0; }
@@ -280,3 +304,21 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .outputs-list { max-height: 60vh; overflow-y: auto; }
 .preflight-problems { max-height: 50vh; overflow-y: auto; margin-top: 8px; }
 .preflight-problems li .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+/* PDF tab file list: to-do groups first, current outputs last */
+.file-counts { display: flex; gap: 6px; flex-wrap: wrap; width: 100%; font-size: 11.5px; margin-bottom: 4px; }
+.file-count { border-radius: 999px; padding: 0 8px; border: 1px solid var(--border); color: var(--muted); }
+.file-count.update { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.file-count.error { border-color: var(--err); color: var(--err); }
+.file-count.done { border-color: var(--ok); color: var(--ok); }
+.file-list li.file-group {
+  cursor: default; padding: 8px 8px 2px; font-size: 11px; font-weight: 600; color: var(--muted);
+  text-transform: none; letter-spacing: .04em; border-radius: 0;
+}
+.file-list li.file-group:hover { background: transparent; }
+.file-list li.file-group.update { color: var(--accent); }
+.file-list li.needs-update { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.update-chip {
+  font-size: 10.5px; font-weight: 600; color: var(--accent-text); background: var(--accent);
+  border-radius: 999px; padding: 0 7px; white-space: nowrap;
+}

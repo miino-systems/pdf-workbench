@@ -1,6 +1,7 @@
 /** Tiny DOM helpers (no framework). */
+import { icon, type IconName } from './icons';
 
-type Child = Node | string | number | null | undefined | false | Child[];
+export type Child = Node | string | number | null | undefined | false | Child[];
 
 export type Props<K extends keyof HTMLElementTagNameMap> = Partial<
   Omit<HTMLElementTagNameMap[K], 'style' | 'children' | 'dataset'>
@@ -50,8 +51,14 @@ export function replaceChildren(el: Element, ...children: Child[]): void {
   append(el, children);
 }
 
-export function button(label: string, onClick: () => void, cls = 'btn'): HTMLButtonElement {
-  return h('button', { class: cls, type: 'button', on: { click: onClick } }, label);
+/** A text button, optionally with a leading icon. */
+export function button(label: string, onClick: () => void, cls = 'btn', iconName?: IconName): HTMLButtonElement {
+  return h('button', { class: cls, type: 'button', on: { click: onClick } }, iconName ? icon(iconName) : null, label);
+}
+
+/** An icon-only button; `title` is its tooltip and accessible name. */
+export function iconButton(iconName: IconName, title: string, onClick: () => void, cls = 'btn btn-sm btn-icon'): HTMLButtonElement {
+  return h('button', { class: cls, type: 'button', title, attrs: { 'aria-label': title }, on: { click: onClick } }, icon(iconName));
 }
 
 export async function copyToClipboard(text: string): Promise<boolean> {

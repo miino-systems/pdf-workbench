@@ -27,7 +27,7 @@ import { currentPageRangeRows, exportPageRanges } from '@/state/pageRanges';
 import { importSequenceFile } from '@/state/sequenceImport';
 import { basename } from '@/workspace';
 import type { Section } from '../app';
-import { button, copyToClipboard, h, replaceChildren } from '../dom';
+import { button, copyToClipboard, h, iconButton, replaceChildren } from '../dom';
 
 const ORDER_LABEL: Record<SequenceOrder, string> = {
   name: 'ファイル名順（自然順: paper2 < paper10）',
@@ -289,8 +289,8 @@ export const sequenceSection: Section = {
       const manual = ws.sequence.order === 'manual';
       const rows = seq.items.map((item, idx) => {
         const entry = ws.sequence.entries.find((e) => e.file === item.file);
-        const upBtn = button('▲', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, -1), { action: 'move', file: item.file, delta: -1 }), 'btn btn-sm');
-        const downBtn = button('▼', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, 1), { action: 'move', file: item.file, delta: 1 }), 'btn btn-sm');
+        const upBtn = iconButton('arrow-up', '上へ', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, -1), { action: 'move', file: item.file, delta: -1 }));
+        const downBtn = iconButton('arrow-down', '下へ', () => void commit((cfg) => moveFile(cfg, filePaths(), item.file, 1), { action: 'move', file: item.file, delta: 1 }));
         upBtn.disabled = item.missing || idx === 0;
         downBtn.disabled = item.missing || idx === seq.items.length - 1;
         upBtn.title = manual ? '上へ' : '上へ（並び順が「手動」に切り替わります）';

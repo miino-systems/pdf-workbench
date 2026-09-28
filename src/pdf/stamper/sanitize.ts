@@ -15,9 +15,14 @@ export interface TextBlockLayout {
   height: number;
 }
 
-/** Split `text` into lines on `\n` and compute the block's line height/height. */
-export function layoutTextBlock(text: string, size: number): TextBlockLayout {
+/**
+ * Split `text` into lines on `\n` and compute the block's line
+ * height/height. `lineHeightFactor` is the layer's `lineHeight` (a multiple
+ * of the font size; invalid values fall back to the default).
+ */
+export function layoutTextBlock(text: string, size: number, lineHeightFactor?: number): TextBlockLayout {
   const lines = text.split('\n');
-  const lineHeight = size * DEFAULT_LINE_HEIGHT_FACTOR;
+  const factor = lineHeightFactor !== undefined && Number.isFinite(lineHeightFactor) && lineHeightFactor > 0 ? lineHeightFactor : DEFAULT_LINE_HEIGHT_FACTOR;
+  const lineHeight = size * factor;
   return { lines, lineHeight, height: lineHeight * lines.length };
 }

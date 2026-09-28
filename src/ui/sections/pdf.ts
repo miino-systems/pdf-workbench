@@ -163,13 +163,11 @@ export const pdfSection: Section = {
           if (loaded && m === metrics) drawOverlay(latestState);
         });
       }
-      return measureLayers(def.layers, {
-        page: displayedPageNumber(state, page),
-        pages: state.pageCount,
-        file,
-        fonts: m?.fonts,
-        images: m?.images,
-      });
+      return measureLayers(
+        def.layers,
+        { page: displayedPageNumber(state, page), pages: state.pageCount, file, fonts: m?.fonts, images: m?.images },
+        def.layout,
+      );
     }
 
     function setHasFile(has: boolean): void {

@@ -10,6 +10,7 @@ export {
   estimateStampBox,
   computeLayerBox,
   unionLayerBoxes,
+  arrangeLayerBoxes,
   estimateTextWidth,
   fontMetricsKey,
   type Box,

@@ -200,7 +200,11 @@ export interface ResolvedFont {
 
 export interface StampLayerBase {
   id: string;
-  /** Offset of this layer relative to the stamp origin (pt). */
+  /**
+   * Offset of this layer relative to the stamp origin (pt, x right / y up).
+   * With a definition `layout`, an extra nudge on top of the automatic
+   * placement.
+   */
   dx?: number;
   dy?: number;
   /** 0..1 */
@@ -209,8 +213,20 @@ export interface StampLayerBase {
   rotate?: number;
 }
 
-export interface TextLayer extends StampLayerBase {
+/** Horizontal alignment of the lines of a multi-line text block. */
+export type TextAlign = 'left' | 'center' | 'right';
+
+/** Options shared by the text-drawing layers (`text`, `pageNumber`). */
+export interface TextBlockOptions {
+  /** Line alignment within the block (the block is as wide as its longest line). Default `left`. */
+  align?: TextAlign;
+  /** Distance between baselines as a multiple of `size`. Default 1.2. */
+  lineHeight?: number;
+}
+
+export interface TextLayer extends StampLayerBase, TextBlockOptions {
   type: 'text';
+  /** `\n` starts a new line. */
   text: string;
   font: FontRef;
   /** Font size in pt. */
@@ -232,7 +248,7 @@ export interface ImageLayer extends StampLayerBase {
  * Page-number layer. `template` supports `{page}`, `{pages}`, `{file}`.
  * Examples: `{page}`, `{page} / {pages}`, `Page {page} of {pages}`.
  */
-export interface PageNumberLayer extends StampLayerBase {
+export interface PageNumberLayer extends StampLayerBase, TextBlockOptions {
   type: 'pageNumber';
   template: string;
   font: FontRef;
@@ -259,11 +275,28 @@ export type StampLayer = TextLayer | ImageLayer | PageNumberLayer | FutureLayer;
 export type ImplementedLayerType = 'text' | 'image' | 'pageNumber';
 export const IMPLEMENTED_LAYER_TYPES: readonly ImplementedLayerType[] = ['text', 'image', 'pageNumber'];
 
+/**
+ * Automatic placement of a stamp's layers. Without it every layer sits at
+ * the stamp origin shifted by its own dx/dy (layers overlap). With it the
+ * layers are laid out one after another, in `layers` order:
+ *  - `row`: left to right (e.g. a logo left of a text block),
+ *  - `column`: top to bottom,
+ * `gap` pt apart, aligned across the other axis by `align` (`start` = top
+ * for a row / left for a column, `end` = bottom / right). Each layer's
+ * dx/dy is then an extra nudge.
+ */
+export interface StampLayout {
+  direction: 'row' | 'column';
+  gap?: number;
+  align?: 'start' | 'center' | 'end';
+}
+
 export interface StampDefinition {
   id: string;
   name: string;
   description?: string;
   layers: StampLayer[];
+  layout?: StampLayout;
   defaultPosition?: StampPosition;
   defaultPages?: PageSelector;
 }

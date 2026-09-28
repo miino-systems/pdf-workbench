@@ -12,7 +12,7 @@ import type { FontRef, ImageLayer, ResolvedFont, StampLayer } from '@/core/types
 import { effectivePosition, renderPageNumber, resolvePages, resolveStampOrigin } from '@/stamps';
 import { parseHexColor } from '@/stamps/color';
 import { toPdfLibStandardFont } from '@/fonts/standard';
-import { fontMetricsKey, unionLayerBoxes, type LayerBox } from './measure';
+import { arrangeLayerBoxes, fontMetricsKey, unionLayerBoxes, type LayerBox } from './measure';
 import { normalizeAngle, toContentPoint, visiblePageSize } from './rotation';
 import { layoutTextBlock } from './sanitize';
 import type { StampJobInput, StampJobResult } from './types';
@@ -160,10 +160,12 @@ export async function applyStamps(input: StampJobInput): Promise<StampJobResult>
       }
       if (drawables.length === 0) continue;
 
-      const union = unionLayerBoxes(drawables.map((d) => d.box));
+      const boxes = arrangeLayerBoxes(drawables.map((d) => d.box), def.layout);
+      const union = unionLayerBoxes(boxes);
       const origin = resolveStampOrigin(position, visible, union);
 
-      for (const { box, draw } of drawables) {
+      for (const [i, { draw }] of drawables.entries()) {
+        const box = boxes[i];
         const visibleOrigin = {
           x: origin.x + (box.dx - union.x),
           y: origin.y + (box.dy - union.y),
@@ -213,11 +215,13 @@ async function buildDrawableLayer(
         : layer.text;
 
     const { font } = fontEntry;
-    const { lines, lineHeight } = layoutTextBlock(text, layer.size);
+    const { lines, lineHeight } = layoutTextBlock(text, layer.size, layer.lineHeight);
 
     let width: number;
+    let lineWidths: number[];
     try {
-      width = lines.reduce((max, line) => Math.max(max, font.widthOfTextAtSize(line, layer.size)), 0);
+      lineWidths = lines.map((line) => font.widthOfTextAtSize(line, layer.size));
+      width = Math.max(0, ...lineWidths);
     } catch (err) {
       ctx.warnings.push(
         `text contains characters not supported by standard font ${describeFontRef(fontEntry.resolved.ref)}; ` +
@@ -237,20 +241,37 @@ async function buildDrawableLayer(
         // the ascent as 0.8em and descent as 0.2em, which is close enough
         // for the general-purpose stamps this module draws.
         const baselineY = contentOrigin.y + box.height - layer.size * 0.8;
-        ctx.page.drawText(text, {
-          x: contentOrigin.x,
-          y: baselineY,
+        // `pageAngle` is how far the *page* rotates the content clockwise
+        // when displayed; the glyph must be rotated the opposite amount
+        // further (i.e. `+ pageAngle` in content space) so that, once the
+        // page's own rotation is applied, it appears rotated by exactly
+        // `layer.rotate` (CCW) to the viewer.
+        const angle = (layer.rotate ?? 0) + pageAngle;
+        const options = {
           font,
           size: layer.size,
           color: rgb(color.r, color.g, color.b),
           opacity: layer.opacity,
           lineHeight,
-          // `pageAngle` is how far the *page* rotates the content clockwise
-          // when displayed; the glyph must be rotated the opposite amount
-          // further (i.e. `+ pageAngle` in content space) so that, once the
-          // page's own rotation is applied, it appears rotated by exactly
-          // `layer.rotate` (CCW) to the viewer.
-          rotate: degrees((layer.rotate ?? 0) + pageAngle),
+          rotate: degrees(angle),
+        };
+        const align = layer.align ?? 'left';
+        if (align === 'left') {
+          ctx.page.drawText(text, { ...options, x: contentOrigin.x, y: baselineY });
+          return;
+        }
+        // Centred / right-aligned: draw line by line, each shifted within the
+        // block (as wide as its longest line) along the rotated text axes.
+        const rad = (angle * Math.PI) / 180;
+        const [cos, sin] = [Math.cos(rad), Math.sin(rad)];
+        lines.forEach((line, i) => {
+          const ox = (width - lineWidths[i]) * (align === 'center' ? 0.5 : 1);
+          const oy = -i * lineHeight;
+          ctx.page.drawText(line, {
+            ...options,
+            x: contentOrigin.x + ox * cos - oy * sin,
+            y: baselineY + ox * sin + oy * cos,
+          });
         });
       },
     };

@@ -25,11 +25,14 @@ import type {
   StampDefinition,
   StampInstance,
   StampLayer,
+  StampLayout,
   StampPosition,
+  TextAlign,
   TextLayer,
 } from '@/core/types';
 import { STAMP_ANCHORS } from '@/core/types';
 import { mmToPt, ptToMm, round } from '@/core/units';
+import { DEFAULT_LINE_HEIGHT_FACTOR } from '@/pdf/stamper/sanitize';
 import {
   BUILTIN_STAMP_TEMPLATES,
   DEFAULT_STAMP_POSITION,
@@ -133,6 +136,28 @@ function optionalNumberInput(value: number | undefined, onChange: (n: number | u
 function describePosition(pos: StampPosition, unit: 'mm' | 'pt'): string {
   const v = (pt: number): number => round(unit === 'mm' ? ptToMm(pt) : pt, 1);
   return `${ANCHOR_LABELS[pos.anchor]} (${v(pos.offsetX)}, ${v(pos.offsetY)} ${unit})`;
+}
+
+const ALIGN_LABELS: Record<TextAlign, string> = { left: '左揃え', center: '中央揃え', right: '右揃え' };
+
+/** 揃え + 行間 for the text-drawing layers (only matter for multi-line text). */
+function textBlockFields(layer: TextLayer | PageNumberLayer, scheduleSave: () => void): HTMLElement {
+  const alignSelect = h(
+    'select',
+    null,
+    (Object.keys(ALIGN_LABELS) as TextAlign[]).map((a) => h('option', { value: a, selected: (layer.align ?? 'left') === a }, ALIGN_LABELS[a])),
+  );
+  alignSelect.addEventListener('change', () => {
+    layer.align = alignSelect.value === 'left' ? undefined : (alignSelect.value as TextAlign);
+    scheduleSave();
+  });
+  const lineHeightInput = h('input', { type: 'number', step: '0.05', min: '0.5', placeholder: String(DEFAULT_LINE_HEIGHT_FACTOR), value: layer.lineHeight === undefined ? '' : String(layer.lineHeight) });
+  lineHeightInput.addEventListener('input', () => {
+    const n = parseFloat(lineHeightInput.value);
+    layer.lineHeight = lineHeightInput.value.trim() === '' || !(n > 0) ? undefined : n;
+    scheduleSave();
+  });
+  return h('div', { class: 'row' }, field('行の揃え', alignSelect), field('行間（文字サイズの倍率，空=1.2）', lineHeightInput));
 }
 
 function colorField(layer: TextLayer | PageNumberLayer, scheduleSave: () => void): HTMLElement {
@@ -382,7 +407,8 @@ function buildTextFields(ctrl: AppController, layer: TextLayer, scheduleSave: ()
   return h(
     'div',
     null,
-    field('テキスト', textArea),
+    field('テキスト（改行で複数行）', textArea),
+    textBlockFields(layer, scheduleSave),
     field('フォント', fontPicker),
     h(
       'div',
@@ -526,6 +552,7 @@ function buildPageNumberFields(ctrl: AppController, layer: PageNumberLayer, sche
     null,
     field('テンプレート', templateInput),
     quickRow,
+    textBlockFields(layer, scheduleSave),
     field('フォント', fontPicker),
     h('div', { class: 'row' }, field('サイズ (pt)', sizeInput), field('色', colorRow)),
     h('div', { class: 'row' }, field('開始番号 (startAt)', startAtInput), field('総ページ数上書き', totalOverrideInput)),
@@ -598,6 +625,48 @@ function renderLayerRow(
 // ---------------------------------------------------------------- section
 
 /** "全ページ" for one placement, "2 配置" for several, "未配置" for none. */
+/** 重ねる / 横に並べる / 縦に並べる, with gap and cross-axis alignment for the latter two. */
+function createLayoutEditor(d: StampDefinition, scheduleSave: () => void): HTMLElement {
+  const modes: { value: 'overlap' | StampLayout['direction']; label: string }[] = [
+    { value: 'overlap', label: '重ねる（各レイヤーの dx/dy で調整）' },
+    { value: 'row', label: '横に並べる（例: ロゴの右に文言）' },
+    { value: 'column', label: '縦に並べる' },
+  ];
+  const modeSelect = h('select', null, modes.map((m) => h('option', { value: m.value, selected: (d.layout?.direction ?? 'overlap') === m.value }, m.label)));
+  const gapInput = h('input', { type: 'number', step: '0.5', min: '0', value: String(d.layout?.gap ?? 0) });
+  const alignSelect = h('select');
+  const details = h('div', { class: 'row' }, field('間隔 (pt)', gapInput), field('揃え', alignSelect));
+
+  function syncAlignOptions(): void {
+    const labels = d.layout?.direction === 'column' ? ['左', '中央', '右'] : ['上', '中央', '下'];
+    replaceChildren(
+      alignSelect,
+      (['start', 'center', 'end'] as const).map((v, i) => h('option', { value: v, selected: (d.layout?.align ?? 'center') === v }, labels[i])),
+    );
+    details.hidden = !d.layout;
+  }
+  function update(): void {
+    const mode = modeSelect.value;
+    d.layout =
+      mode === 'overlap'
+        ? undefined
+        : { direction: mode as StampLayout['direction'], gap: parseFloat(gapInput.value) || 0, align: alignSelect.value as StampLayout['align'] };
+    syncAlignOptions();
+    scheduleSave();
+  }
+  modeSelect.addEventListener('change', update);
+  gapInput.addEventListener('input', update);
+  alignSelect.addEventListener('change', update);
+  syncAlignOptions();
+  return h(
+    'div',
+    null,
+    modeSelect,
+    details,
+    h('p', { class: 'muted settings-note' }, '並べる場合はレイヤーの順（↑↓で変更）に配置され，dx/dy は追加の微調整になります．'),
+  );
+}
+
 function describePlacements(instances: StampInstance[]): string {
   if (instances.length === 0) return '未配置';
   if (instances.length === 1) return describePageSelector(instances[0].pages);
@@ -841,6 +910,8 @@ export const stampsSection: Section = {
         h('div', { class: 'row', style: 'justify-content:space-between' }, h('h2', null, 'デザイン'), defStatus),
         field('名前', nameInput),
         field('説明', descInput),
+        h('h3', null, 'レイヤーの並べ方'),
+        createLayoutEditor(d, scheduleSave),
         h('h3', null, 'レイヤー'),
         layersContainer,
         addLayerRow,

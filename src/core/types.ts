@@ -349,11 +349,37 @@ export interface PreflightMargins {
   unit: 'mm' | 'pt' | 'in';
 }
 
+/**
+ * Per-page override of some margin sides, e.g. a wider top margin on the
+ * title page only. `pages` selects which pages it applies to (same
+ * `PageSelector` used for stamp placement); `margins` only needs to name the
+ * sides being overridden — `unit` and any side left out fall back to
+ * `PreflightConfig.margins`. When several overrides match the same page, the
+ * later entry in `marginOverrides` wins per side.
+ *
+ * Example (first page only, top margin 35mm — the rest inherited):
+ * ```json
+ * { "pages": { "kind": "first" }, "margins": { "top": 35 } }
+ * ```
+ */
+export interface PreflightMarginOverride {
+  pages: PageSelector;
+  margins: Partial<Pick<PreflightMargins, 'top' | 'bottom' | 'left' | 'right'>>;
+}
+
 /** `.pdf-workbench/preflight.json` */
 export interface PreflightConfig {
   version: number;
   id: string;
   name?: string;
+  /**
+   * Id of the built-in preset (`preflight/presets.ts` `PREFLIGHT_PRESETS`)
+   * this config was last applied from, e.g. `'ieee-conference'`. Purely
+   * informational (shown in the UI as "適用元"); editing the config after
+   * applying a preset does not clear it, so treat it as a starting-point
+   * label rather than a guarantee the values still match that preset.
+   */
+  preset?: string;
   page?: {
     /** e.g. `A4`, `Letter`; see core/units.ts PAPER_SIZES_PT. */
     size?: string;
@@ -362,6 +388,8 @@ export interface PreflightConfig {
     tolerance?: number;
   };
   margins?: PreflightMargins;
+  /** Per-page margin overrides (e.g. a wider first-page top margin). See `PreflightMarginOverride`. */
+  marginOverrides?: PreflightMarginOverride[];
   pages?: { min?: number; max?: number };
   checks?: {
     /** Object-based (getTextContent) margin check. */

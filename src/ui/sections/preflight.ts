@@ -10,10 +10,10 @@
  * non-fatal: the object-based report is still saved even if rasterisation
  * throws.
  */
-import type { PageSize, PreflightConfig, PreflightMargins, PreflightReport, PreflightWarningCode } from '@/core/types';
+import type { PageSize, PreflightConfig, PreflightReport, PreflightWarningCode } from '@/core/types';
 import { PAPER_SIZES_PT, toPt } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
-import { checkMarginsByRaster, runPreflight, summarizeReport } from '@/preflight';
+import { PREFLIGHT_PRESETS, applyPreflightPreset, checkMarginsByRaster, marginsForPage, runPreflight, summarizeReport } from '@/preflight';
 import type { AppController, AppState } from '@/state/app';
 import type { Section } from '../app';
 import { button, h, replaceChildren } from '../dom';
@@ -55,18 +55,21 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
 const SEVERITY_LABEL: Record<PreflightReport['result'], string> = { ok: '✓ OK', warning: '⚠ Warning', error: '✗ Error' };
 const SEVERITY_CLASS: Record<PreflightReport['result'], string> = { ok: 'ok', warning: 'warn', error: 'err' };
 
-async function runRasterMarginChecks(bytes: Uint8Array, margins: PreflightMargins, report: PreflightReport): Promise<void> {
+async function runRasterMarginChecks(bytes: Uint8Array, config: PreflightConfig, report: PreflightReport): Promise<void> {
+  const margins = config.margins;
+  if (!margins) return;
   const renderer = new PdfRenderer(bytes);
   try {
     await renderer.load();
-    const marginsPt = {
-      top: toPt(margins.top, margins.unit),
-      bottom: toPt(margins.bottom, margins.unit),
-      left: toPt(margins.left, margins.unit),
-      right: toPt(margins.right, margins.unit),
-    };
     for (let pageNumber = 1; pageNumber <= renderer.pageCount; pageNumber += 1) {
       const pageSize: PageSize = renderer.getPageSize(pageNumber);
+      const pageMargins = marginsForPage(margins, config.marginOverrides, pageNumber, renderer.pageCount);
+      const marginsPt = {
+        top: toPt(pageMargins.top, pageMargins.unit),
+        bottom: toPt(pageMargins.bottom, pageMargins.unit),
+        left: toPt(pageMargins.left, pageMargins.unit),
+        right: toPt(pageMargins.right, pageMargins.unit),
+      };
       const canvas = document.createElement('canvas');
       await renderer.renderPage(pageNumber, canvas, { scale: 1 });
       const ctx2d = canvas.getContext('2d');
@@ -89,7 +92,14 @@ async function runRasterMarginChecks(bytes: Uint8Array, margins: PreflightMargin
   }
 }
 
-function buildRulesForm(ctrl: AppController, draft: PreflightConfig, statusEl: HTMLElement, saveNowRef: { save: () => void }): HTMLElement {
+function buildRulesForm(
+  ctrl: AppController,
+  draft: PreflightConfig,
+  statusEl: HTMLElement,
+  saveNowRef: { save: () => void },
+  originalJson: string,
+  rerenderForm: () => void,
+): HTMLElement {
   const debouncedSave = debounce(() => void doSave(), 400);
   function scheduleSave(): void {
     statusEl.textContent = '未保存の変更…';
@@ -101,6 +111,43 @@ function buildRulesForm(ctrl: AppController, draft: PreflightConfig, statusEl: H
     statusEl.textContent = '保存しました';
   }
   saveNowRef.save = () => void doSave();
+
+  const presetSelect = h('select', {});
+  presetSelect.append(h('option', { value: '' }, 'ひな形を選択…'));
+  for (const preset of PREFLIGHT_PRESETS) presetSelect.append(h('option', { value: preset.id }, preset.label));
+  const presetNote = h('p', { class: 'muted' });
+  function updatePresetNote(): void {
+    const preset = PREFLIGHT_PRESETS.find((p) => p.id === presetSelect.value);
+    presetNote.textContent = preset?.note ?? '';
+  }
+  presetSelect.addEventListener('change', updatePresetNote);
+  updatePresetNote();
+
+  const appliedFromLabel = h('p', { class: 'muted' });
+  if (draft.preset) {
+    const appliedFrom = PREFLIGHT_PRESETS.find((p) => p.id === draft.preset);
+    appliedFromLabel.textContent = `適用元のひな形: ${appliedFrom?.label ?? draft.preset}`;
+  }
+
+  const applyPresetButton = button(
+    'ひな形を適用',
+    () => {
+      const preset = PREFLIGHT_PRESETS.find((p) => p.id === presetSelect.value);
+      if (!preset) {
+        ctrl.toast('warn', 'ひな形を選択してください。');
+        return;
+      }
+      const isDirty = JSON.stringify(draft) !== originalJson;
+      if (isDirty && !confirm(`現在の余白・ページ設定を「${preset.label}」で置き換えます。未保存の変更があれば失われます。よろしいですか？`)) {
+        return;
+      }
+      Object.assign(draft, applyPreflightPreset(preset, draft));
+      // Re-render the whole form so every input reflects the new draft
+      // values; saving itself is left to the existing 保存 button/debounce.
+      rerenderForm();
+    },
+    'btn btn-sm',
+  );
 
   const idInput = h('input', { type: 'text', value: draft.id });
   idInput.addEventListener('input', () => {
@@ -193,6 +240,10 @@ function buildRulesForm(ctrl: AppController, draft: PreflightConfig, statusEl: H
   return h(
     'div',
     null,
+    h('h3', null, 'ひな形 (プリセット)'),
+    h('div', { class: 'row' }, field('ひな形', presetSelect), applyPresetButton),
+    presetNote,
+    appliedFromLabel,
     h('div', { class: 'row' }, field('id', idInput), field('名前', nameInput)),
     h('h3', null, 'ページ'),
     h(
@@ -270,7 +321,7 @@ export const preflightSection: Section = {
         });
         if (cfg.checks?.marginRaster && cfg.margins) {
           try {
-            await runRasterMarginChecks(state.selectedBytes!, cfg.margins, report);
+            await runRasterMarginChecks(state.selectedBytes!, cfg, report);
           } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             ctrl.toast('warn', `描画ベースの余白チェックに失敗しました: ${msg}`);
@@ -320,6 +371,19 @@ export const preflightSection: Section = {
       );
     }
 
+    /**
+     * (Re)build the rules form for the current `draft`. `markDirty` is set
+     * when the rebuild comes from applying a preset (an in-memory change
+     * that has not gone through `updatePreflightConfig` yet) rather than
+     * from a freshly loaded/saved workspace config, so the status label
+     * reflects that there is something to save.
+     */
+    function renderForm(markDirty: boolean): void {
+      if (!draft) return;
+      const statusEl = h('span', { class: 'muted' }, markDirty ? '未保存の変更（ひな形を適用）…' : '');
+      replaceChildren(rulesFormBox, buildRulesForm(ctrl, draft, statusEl, saveNowRef, savedJson ?? '', () => renderForm(true)));
+    }
+
     function applyState(state: AppState): void {
       const ws = state.workspace;
       replaceChildren(root, ws ? gridEl : noWorkspace);
@@ -329,8 +393,7 @@ export const preflightSection: Section = {
       if (!draft || cfgJson !== savedJson) {
         draft = cloneConfig(ws.preflight);
         savedJson = cfgJson;
-        const statusEl = h('span', { class: 'muted' });
-        replaceChildren(rulesFormBox, buildRulesForm(ctrl, draft, statusEl, saveNowRef));
+        renderForm(false);
       }
       rawJsonBox.textContent = JSON.stringify(ws.preflight, null, 2);
 

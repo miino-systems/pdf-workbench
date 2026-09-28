@@ -3,7 +3,7 @@
  * size/orientation/count (object-based, via `pdf/reader`) plus optional
  * object- and raster-based margin/collision checks.
  */
-export { runPreflight, type PreflightContext } from './checks.js';
+export { runPreflight, marginsForPage, type PreflightContext } from './checks.js';
 export {
   checkMarginsByRaster,
   checkStampCollision,
@@ -14,3 +14,4 @@ export {
   type StampCollisionResult,
 } from './raster.js';
 export { reportFileName, summarizeReport } from './report.js';
+export { PREFLIGHT_PRESETS, applyPreflightPreset, type PreflightPreset } from './presets.js';

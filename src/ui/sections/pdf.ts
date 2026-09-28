@@ -522,9 +522,63 @@ export const pdfSection: Section = {
       replaceChildren(jobPanel, ...children);
     }
 
+    /** "DRAFT（全ページ）" for each enabled / disabled placement, in stamps.json order. */
+    function stampSummary(state: AppState): { enabled: string[]; disabled: string[] } {
+      const ws = state.workspace;
+      const enabled: string[] = [];
+      const disabled: string[] = [];
+      for (const inst of ws?.stamps.instances ?? []) {
+        const name = ws?.stamps.definitions.find((d) => d.id === inst.stampId)?.name ?? inst.stampId;
+        (inst.enabled ? enabled : disabled).push(`${name}（${describePageSelector(inst.pages)}）`);
+      }
+      return { enabled, disabled };
+    }
+
+    async function runBatch(): Promise<void> {
+      const paths = ctrl.state.files.map((f) => f.path);
+      const { enabled, disabled } = stampSummary(ctrl.state);
+      const message =
+        `${paths.length} 件の PDF に次のスタンプを付けて生成します．\n\n` +
+        `有効:\n${enabled.map((n) => `  ・${n}`).join('\n')}` +
+        (disabled.length ? `\n\n無効（付きません）:\n${disabled.map((n) => `  ・${n}`).join('\n')}` : '') +
+        '\n\nよろしいですか？';
+      if (!confirm(message)) return;
+      const label = '全ファイルを処理';
+      await ctrl.run(label, async () => {
+        let done = 0;
+        let warned = 0;
+        const failed: string[] = [];
+        try {
+          for (const [i, path] of paths.entries()) {
+            ctrl.setProgress({ label, done: i, total: paths.length });
+            try {
+              const res = await generateStampedPdf(ctrl, path);
+              if (res) {
+                done += 1;
+                if (res.warnings.length) warned += 1;
+                // A few per-file toasts; the rest are in each file's job info.
+                if (warned <= 3) for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
+              }
+            } catch (e) {
+              failed.push(path);
+              console.error('batch generate failed', path, e);
+            }
+          }
+        } finally {
+          ctrl.setProgress(undefined);
+        }
+        ctrl.toast(
+          failed.length ? 'warn' : 'ok',
+          `${done} 件処理しました（警告 ${warned} 件${failed.length ? `／エラー ${failed.length} 件: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ' 他' : ''}` : ''}）`,
+          10000,
+        );
+      });
+    }
+
     function renderActions(state: AppState): void {
       const ws = state.workspace;
-      const hasEnabled = ws?.stamps.instances.some((i) => i.enabled) ?? false;
+      const { enabled, disabled } = stampSummary(state);
+      const hasEnabled = enabled.length > 0;
       const generateDisabled = !ws || !state.selectedFile || !hasEnabled || !!state.busy;
       const batchDisabled = !ws || state.files.length === 0 || !hasEnabled || !!state.busy;
 
@@ -534,6 +588,7 @@ export const pdfSection: Section = {
           class: 'btn btn-primary',
           type: 'button',
           disabled: generateDisabled,
+          title: hasEnabled ? `付くスタンプ: ${enabled.join('，')}` : '有効なスタンプがありません',
           on: {
             click: () => {
               const path = state.selectedFile;
@@ -548,45 +603,95 @@ export const pdfSection: Section = {
         },
         'Generate PDF',
       );
+      const batchBtn = h('button', { class: 'btn', type: 'button', disabled: batchDisabled, on: { click: () => void runBatch() } }, '全ファイルを処理');
+      const outputsBtn = h('button', { class: 'btn', type: 'button', disabled: !ws, on: { click: () => void openOutputs() } }, '📂 出力フォルダ');
 
-      const batchBtn = h(
-        'button',
-        {
-          class: 'btn',
-          type: 'button',
-          disabled: batchDisabled,
-          on: {
-            click: () => {
-              const paths = ctrl.state.files.map((f) => f.path);
-              void ctrl.run('全ファイルを処理', async () => {
-                let done = 0;
-                let warned = 0;
-                let failed = 0;
-                for (const path of paths) {
-                  try {
-                    const res = await generateStampedPdf(ctrl, path);
-                    if (res) {
-                      done += 1;
-                      if (res.warnings.length) warned += 1;
-                      for (const w of res.warnings) ctrl.toast('warn', `${path}: ${w}`);
-                    }
-                  } catch (e) {
-                    failed += 1;
-                    console.error('batch generate failed', path, e);
-                  }
-                }
-                ctrl.toast(
-                  failed ? 'warn' : 'ok',
-                  `${done} 件処理しました（警告 ${warned} 件${failed ? `／エラー ${failed} 件` : ''}）`,
-                );
-              });
-            },
-          },
-        },
-        '全ファイルを処理',
+      const p = state.progress;
+      const pct = p ? Math.floor((p.done / Math.max(1, p.total)) * 100) : 0;
+      replaceChildren(
+        actionsPanel,
+        ws
+          ? h(
+              'div',
+              { class: 'stamp-summary' },
+              hasEnabled
+                ? h('div', null, h('strong', null, `付くスタンプ（${enabled.length}）: `), enabled.join('，'))
+                : h('div', { class: 'alert warn' }, '有効なスタンプがありません．上の Stamps でチェックを入れてください．'),
+              disabled.length ? h('div', { class: 'muted' }, `無効: ${disabled.join('，')}`) : '',
+            )
+          : '',
+        p
+          ? h(
+              'div',
+              { class: 'batch-progress' },
+              h('progress', { max: p.total, value: p.done }),
+              h('span', { class: 'mono' }, `${p.done}/${p.total}（${pct}%）`),
+            )
+          : '',
+        h('div', { class: 'row' }, generateBtn, batchBtn, outputsBtn),
       );
+    }
 
-      replaceChildren(actionsPanel, h('div', { class: 'row' }, generateBtn, batchBtn));
+    // ------------------------------------------------------ output folder
+
+    const outputsDialog = h('dialog', { class: 'outputs-dialog' });
+    root.append(outputsDialog);
+
+    /** Open a workspace PDF in a new browser tab (a blob URL; nothing leaves the browser). */
+    async function openInTab(path: string): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws) return;
+      const bytes = await ws.fs.readBytes(path);
+      const url = URL.createObjectURL(new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+
+    /**
+     * Browsers cannot reveal a local folder in Finder/Explorer, so list
+     * output/ here instead, each file openable in a new tab.
+     */
+    async function openOutputs(): Promise<void> {
+      const ws = ctrl.state.workspace;
+      if (!ws) return;
+      const dir = ws.config.directories.output;
+      const entries = await ws.fs.list(dir, { extensions: ['.pdf'] }).catch(() => []);
+      const staleOutputs = new Map(
+        ctrl.state.files.filter((f) => f.job && f.status !== 'processed' && f.status !== 'warning').map((f) => [f.job!.output, STATUS_LABEL[f.status].text]),
+      );
+      replaceChildren(
+        outputsDialog,
+        h(
+          'div',
+          { class: 'row', style: 'justify-content:space-between' },
+          h('h2', null, `${dir}/（${entries.length} 件）`),
+          button('閉じる', () => outputsDialog.close(), 'btn btn-sm'),
+        ),
+        h(
+          'p',
+          { class: 'muted settings-note' },
+          `ブラウザからは Finder / エクスプローラでフォルダを開けないため，一覧から開きます．フォルダの場所: Workspace「${ws.config.name}」内の ${dir}/`,
+        ),
+        entries.length
+          ? h(
+              'ul',
+              { class: 'list outputs-list' },
+              [...entries]
+                .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+                .map((e) =>
+                  h(
+                    'li',
+                    { on: { click: () => void openInTab(e.path) }, title: 'クリックで新しいタブに開く' },
+                    h('span', { class: 'name' }, e.name),
+                    staleOutputs.has(e.path) ? h('span', { class: 'badge warn', title: staleOutputs.get(e.path) }, '古い') : '',
+                    h('span', { class: 'muted' }, new Date(e.lastModified).toLocaleString()),
+                    h('span', { class: 'muted' }, formatBytes(e.size)),
+                  ),
+                ),
+            )
+          : h('p', { class: 'muted' }, 'まだ出力はありません．'),
+      );
+      if (!outputsDialog.open) outputsDialog.showModal();
     }
 
     function syncToolbar(state: AppState): void {

@@ -266,3 +266,15 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .drop-zone:hover, .drop-zone.active { border-color: var(--accent); }
 .drop-zone.active { background: var(--panel); }
 .drop-zone.disabled { opacity: .5; cursor: not-allowed; }
+
+/* PDF tab: what will be stamped, batch progress, output folder */
+.stamp-summary { font-size: 12.5px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 2px; }
+.stamp-summary .alert { margin: 0; }
+.batch-progress { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.batch-progress progress { flex: 1; }
+.outputs-dialog {
+  width: min(720px, calc(100vw - 32px)); max-height: 80vh; padding: 14px 16px;
+  background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius);
+}
+.outputs-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.outputs-list { max-height: 60vh; overflow-y: auto; }

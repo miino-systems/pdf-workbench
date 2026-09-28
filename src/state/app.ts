@@ -44,7 +44,7 @@ import {
 } from '@/workspace';
 import { EVENT_TYPES, HistoryJournal, SnapshotStore } from '@/history';
 import { countPdfPages } from '@/pdf/reader';
-import { effectivePosition } from '@/stamps';
+import { effectivePosition, stampsFingerprint } from '@/stamps';
 import { resolveSequence, sequenceItemFor, type ResolvedSequence, type SequenceFileInfo } from '@/sequence';
 import type { HistoryEvent } from '@/core/types';
 import { normalizeSequenceConfig } from '@/sequence/normalize';
@@ -58,7 +58,8 @@ export type FileStatus =
   | 'warning'
   | 'error'
   | 'source-changed'
-  | 'numbering-changed';
+  | 'numbering-changed'
+  | 'stamps-changed';
 
 export interface PdfFileItem extends WorkspaceFileEntry {
   status: FileStatus;
@@ -90,6 +91,8 @@ export interface AppState {
   currentPage: number;
   pageCount: number;
   busy?: string;
+  /** Progress of a long batch (shown as n/N and %), while it runs. */
+  progress?: { label: string; done: number; total: number };
   toasts: Toast[];
   /** Recently loaded events (for the History tab). */
   events: HistoryEvent[];
@@ -201,6 +204,11 @@ export class AppController {
 
   dismissToast(id: number): void {
     this.store.set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+  }
+
+  /** Report batch progress (undefined to clear). */
+  setProgress(progress: AppState['progress']): void {
+    this.store.set({ progress });
   }
 
   /** Run an async task with a busy indicator and error toast. */
@@ -408,10 +416,16 @@ export class AppController {
     await this.refreshSequence();
   }
 
-  /** `computeStatus` against the currently resolved sequence (if any). */
-  private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string): FileStatus {
-    const item = sequenceItemFor(this.state.sequence, path);
-    return computeStatus(job, hash, item ? { pageStart: item.pageStart } : undefined);
+  /** `computeStatus` against the currently resolved sequence (if any) and the current stamps. */
+  private statusFor(job: JobRecord | undefined, hash: string | undefined, path: string, sequence = this.state.sequence): FileStatus {
+    const item = sequenceItemFor(sequence, path);
+    const ws = this.state.workspace;
+    return computeStatus(job, hash, item ? { pageStart: item.pageStart } : undefined, ws ? stampsFingerprint(ws.stamps) : undefined);
+  }
+
+  /** Recompute every file's status (after stamps.json or jobs.json changed). */
+  private refreshStatuses(): void {
+    this.store.set((s) => ({ files: s.files.map((f) => ({ ...f, status: this.statusFor(f.job, f.sha256, f.path) })) }));
   }
 
   // ------------------------------------------------------------- sequence
@@ -447,10 +461,7 @@ export class AppController {
     const resolved = resolveSequence(ws.sequence, infos);
     this.store.set((s) => ({
       sequence: resolved,
-      files: s.files.map((f) => {
-        const item = sequenceItemFor(resolved, f.path);
-        return { ...f, status: computeStatus(f.job, f.sha256, item ? { pageStart: item.pageStart } : undefined) };
-      }),
+      files: s.files.map((f) => ({ ...f, status: this.statusFor(f.job, f.sha256, f.path, resolved) })),
     }));
     return resolved;
   }
@@ -784,6 +795,7 @@ export class AppController {
     else if (kind === 'preflight') text = await savePreflightConfig(ws.fs, ws.preflight);
     else text = await saveJobsConfig(ws.fs, ws.jobs);
     this.diskText.set(kind, text);
+    if (kind === 'stamps') this.refreshStatuses();
   }
 
   /**
@@ -819,6 +831,7 @@ export class AppController {
     else ws.jobs = parsed as JobsConfig;
     this.diskText.set(kind, text);
     this.reportedBadText.delete(kind);
+    if (kind === 'stamps') this.refreshStatuses();
     this.undoStack.clear();
     this.syncUndoState();
     return true;
@@ -1049,10 +1062,13 @@ export function computeStatus(
   job: JobRecord | undefined,
   currentHash: string | undefined,
   numbering?: { pageStart?: number },
+  stampsHash?: string,
 ): FileStatus {
   if (!job) return 'not-processed';
   if (currentHash && job.sourceHash !== currentHash) return 'source-changed';
   if (numbering && job.pageStart !== undefined && job.pageStart !== numbering.pageStart) return 'numbering-changed';
+  // Jobs from before stamps fingerprints were recorded are never flagged.
+  if (stampsHash && job.stampsHash && job.stampsHash !== stampsHash) return 'stamps-changed';
   if (job.status === 'error') return 'error';
   if (job.status === 'warning') return 'warning';
   return 'processed';
@@ -1065,4 +1081,5 @@ export const STATUS_LABEL: Record<FileStatus, { icon: string; text: string; cls:
   error: { icon: '✗', text: 'Error', cls: 'err' },
   'source-changed': { icon: '⚠', text: 'Source changed', cls: 'warn' },
   'numbering-changed': { icon: '⚠', text: 'Page numbers changed', cls: 'warn' },
+  'stamps-changed': { icon: '⚠', text: '古い出力（生成後にスタンプ設定が変更されました）', cls: 'warn' },
 };

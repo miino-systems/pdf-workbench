@@ -12,7 +12,7 @@ import { FontResolver, fontWarningMessage, withHash } from '@/fonts';
 import { EVENT_TYPES } from '@/history';
 import { applyStamps } from '@/pdf/stamper';
 import { sequenceItemFor } from '@/sequence';
-import { createId } from '@/stamps';
+import { createId, stampsFingerprint } from '@/stamps';
 import { basename } from '@/workspace';
 import type { AppController } from './app';
 
@@ -45,6 +45,9 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     return undefined;
   }
 
+  // Fingerprint of the stamps as they are applied now (before the font
+  // hashes below are recorded, which the fingerprint ignores anyway).
+  const stampsHash = stampsFingerprint(ws.stamps);
   const sourceBytes = await ws.fs.readBytes(sourcePath);
   const sourceHash = await sha256(sourceBytes);
   const outputPath = ctrl.outputPathFor(sourcePath);
@@ -108,6 +111,7 @@ export async function generateStampedPdf(ctrl: AppController, sourcePath: string
     output: outputPath,
     outputHash,
     stampInstances: result.applied.map((a) => a.instanceId),
+    stampsHash,
     fonts: result.fonts,
     pageStart: pageNumberStart,
     pageEnd: sequenceItem?.pageEnd,

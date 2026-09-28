@@ -482,6 +482,11 @@ export interface JobRecord {
   outputHash?: string;
   /** StampInstance ids that were applied. */
   stampInstances: string[];
+  /**
+   * `stampsFingerprint` of stamps.json at generation time; when the current
+   * stamps no longer match, the output is shown as stale.
+   */
+  stampsHash?: string;
   /** Fonts actually embedded (for reproducibility warnings). */
   fonts?: { ref: FontRef; sha256?: string }[];
   /**

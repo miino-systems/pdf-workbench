@@ -111,7 +111,12 @@ export function mountApp(rootEl: HTMLElement, ctrl: AppController, sections: Sec
   function render(state: AppState, prev: AppState): void {
     applyTheme(state);
     showTab(state.prefs.lastTab);
-    busy.textContent = state.busy ? `⏳ ${state.busy}…` : '';
+    const p = state.progress;
+    busy.textContent = p
+      ? `⏳ ${p.label} ${p.done}/${p.total}（${Math.floor((p.done / Math.max(1, p.total)) * 100)}%）`
+      : state.busy
+        ? `⏳ ${state.busy}…`
+        : '';
     wsLabel.textContent = state.workspace ? `Workspace: ${state.workspace.config.name}/` : '';
     renderActions(state);
     renderToasts(state);

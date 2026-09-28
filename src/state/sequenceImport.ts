@@ -5,6 +5,7 @@
  * of truth.
  */
 import { importSequenceText, type ImportedSequence } from '@/sequence';
+import { formatTs } from '@/history/timestamp';
 import type { AppController } from './app';
 
 export interface SequenceImportResult extends ImportedSequence {
@@ -19,7 +20,25 @@ export async function importSequenceFromText(ctrl: AppController, text: string, 
     papersDir: ws.config.directories.papers,
     files: ctrl.state.files.map((f) => f.path),
   });
-  await ctrl.updateSequence(result.config, { action: 'import', source, format: result.format });
+  // Record where this order came from, so the Sequence tab can show it
+  // long after the drop (see `SequenceOrigin`). `sortKey` falls back to
+  // 'file order' when the source has no column that looks like one: the
+  // rows' own order is what was actually used, never re-sorted.
+  result.config.origin = {
+    kind: 'import',
+    source,
+    format: result.format,
+    importedAt: formatTs(),
+    sortKey: result.sortKey ?? 'file order',
+    rows: result.rows,
+  };
+  await ctrl.updateSequence(result.config, {
+    action: 'import',
+    source,
+    format: result.format,
+    headerSkipped: result.header !== undefined,
+    rows: result.rows,
+  });
   return { ...result, source };
 }
 

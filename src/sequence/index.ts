@@ -38,6 +38,7 @@ export {
   parseSequenceCsv,
   parseCsv,
   parseSequenceJson,
+  type Column,
   type ImportSequenceOptions,
   type ImportedSequence,
 } from './import';

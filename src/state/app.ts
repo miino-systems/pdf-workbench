@@ -44,6 +44,7 @@ import {
 } from '@/workspace';
 import { EVENT_TYPES, HistoryJournal, SnapshotStore } from '@/history';
 import { countPdfPages } from '@/pdf/reader';
+import { effectivePosition } from '@/stamps';
 import { resolveSequence, sequenceItemFor, type ResolvedSequence, type SequenceFileInfo } from '@/sequence';
 import type { HistoryEvent } from '@/core/types';
 import { normalizeSequenceConfig } from '@/sequence/normalize';
@@ -602,23 +603,51 @@ export class AppController {
     );
   }
 
+  /**
+   * Give a placement its own position (overriding the definition's
+   * `defaultPosition`). The event records where it was before (`from`) so
+   * the history shows the whole move.
+   */
   async setInstancePosition(instanceId: string, position: StampPosition): Promise<void> {
-    let stampId = '';
+    const ws = this.requireWorkspace();
+    const inst = ws.stamps.instances.find((i) => i.id === instanceId);
+    const def = inst && ws.stamps.definitions.find((d) => d.id === inst.stampId);
+    const from = inst && def ? effectivePosition(def, inst) : undefined;
     await this.updateStamps(
       (cfg) => {
-        const inst = cfg.instances.find((i) => i.id === instanceId);
-        if (inst) {
-          inst.position = position;
-          stampId = inst.stampId;
-        }
+        const target = cfg.instances.find((i) => i.id === instanceId);
+        if (!target) return false;
+        target.position = position;
       },
       {
         type: EVENT_TYPES.stampMoved,
-        stamp: stampId,
+        stamp: inst?.stampId ?? '',
         instance: instanceId,
         anchor: position.anchor,
-        x: Math.round(position.offsetX * 100) / 100,
-        y: Math.round(position.offsetY * 100) / 100,
+        x: round2(position.offsetX),
+        y: round2(position.offsetY),
+        ...(from ? { from: { anchor: from.anchor, x: round2(from.offsetX), y: round2(from.offsetY), own: !!inst?.position } } : {}),
+      },
+    );
+  }
+
+  /** Drop a placement's own position so it follows the definition's `defaultPosition` again. */
+  async resetInstancePosition(instanceId: string): Promise<void> {
+    const inst = this.requireWorkspace().stamps.instances.find((i) => i.id === instanceId);
+    if (!inst?.position) return;
+    const from = inst.position;
+    await this.updateStamps(
+      (cfg) => {
+        const target = cfg.instances.find((i) => i.id === instanceId);
+        if (!target) return false;
+        target.position = undefined;
+      },
+      {
+        type: EVENT_TYPES.stampMoved,
+        stamp: inst.stampId,
+        instance: instanceId,
+        reset: true,
+        from: { anchor: from.anchor, x: round2(from.offsetX), y: round2(from.offsetY), own: true },
       },
     );
   }
@@ -981,6 +1010,10 @@ export class AppController {
     await this.log(EVENT_TYPES.preflightRun, { file: report.file, result: report.result, report: path });
     return path;
   }
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 function snapshotOf(ws: WorkspaceState): ConfigSnapshot {

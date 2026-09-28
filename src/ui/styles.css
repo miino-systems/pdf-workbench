@@ -224,6 +224,7 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 .position-editor { display: flex; flex-direction: column; gap: 6px; }
 .placement-body { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
 .placement-body > .field { margin-bottom: 0; }
+.position-source { margin-bottom: 6px; gap: 6px; }
 
 /* Sections that fill the viewport (PDF, Stamps): their columns scroll, not the page */
 .app-main > .section-fill { flex: 1 1 auto; min-height: 0; }

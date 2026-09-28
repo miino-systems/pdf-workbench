@@ -130,6 +130,11 @@ function optionalNumberInput(value: number | undefined, onChange: (n: number | u
   return inp;
 }
 
+function describePosition(pos: StampPosition, unit: 'mm' | 'pt'): string {
+  const v = (pt: number): number => round(unit === 'mm' ? ptToMm(pt) : pt, 1);
+  return `${ANCHOR_LABELS[pos.anchor]} (${v(pos.offsetX)}, ${v(pos.offsetY)} ${unit})`;
+}
+
 function colorField(layer: TextLayer | PageNumberLayer, scheduleSave: () => void): HTMLElement {
   const safe = isValidHexColor(layer.color) && layer.color.length === 7 ? layer.color : '#000000';
   const colorInput = h('input', { type: 'color', value: safe });
@@ -871,6 +876,24 @@ export const stampsSection: Section = {
           status.textContent = '未保存の変更…';
           debouncedPosSave(pos);
         });
+        // An own position (set by dragging in the PDF preview or editing it
+        // here) overrides the definition's defaultPosition — say so, since a
+        // changed defaultPosition then has no effect on this placement.
+        const defaultPos = def.defaultPosition ?? DEFAULT_STAMP_POSITION;
+        const positionSource = inst.position
+          ? h(
+              'div',
+              { class: 'row position-source' },
+              h('span', { class: 'badge warn', title: 'stamps.json の instances[].position' }, '📌 独自の位置'),
+              h('span', { class: 'muted' }, `既定位置は ${describePosition(defaultPos, ctrl.state.prefs.unit)}`),
+              button('既定位置に戻す', () => savePlacement(ctrl.resetInstancePosition(inst.id), status), 'btn btn-sm'),
+            )
+          : h(
+              'div',
+              { class: 'row position-source' },
+              h('span', { class: 'badge', title: 'stamps.json の definitions[].defaultPosition' }, '既定位置を使用中'),
+              h('span', { class: 'muted' }, '変更するとこの配置だけの位置になります'),
+            );
         return h(
           'div',
           { class: 'layer' },
@@ -882,7 +905,7 @@ export const stampsSection: Section = {
             h('span', { style: 'flex:1' }),
             button('✕', () => void ctrl.removeInstance(inst.id), 'btn btn-sm btn-danger'),
           ),
-          h('div', { class: 'placement-body' }, field('ページ', pagesEditor), field('位置', posEditor)),
+          h('div', { class: 'placement-body' }, field('ページ', pagesEditor), field('位置', h('div', null, positionSource, posEditor))),
         );
       });
 

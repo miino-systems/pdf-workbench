@@ -468,7 +468,15 @@ export const pdfSection: Section = {
               return h(
                 'li',
                 null,
-                h('label', { class: 'row', style: 'flex:1' }, checkbox, h('span', { class: 'name' }, def?.name ?? inst.stampId)),
+                h(
+                  'label',
+                  { class: 'row', style: 'flex:1' },
+                  checkbox,
+                  h('span', { class: 'name' }, def?.name ?? inst.stampId),
+                  inst.position
+                    ? h('span', { title: '独自の位置（ドラッグ等で設定）: 定義の既定位置より優先されます．Stamps タブで既定位置に戻せます' }, '📌')
+                    : '',
+                ),
                 h('span', { class: 'muted' }, describePageSelector(inst.pages)),
               );
             }),

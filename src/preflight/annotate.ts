@@ -55,6 +55,12 @@ export function describePreflightCode(code: PreflightWarningCode, config?: Prefl
       return 'スタンプが既存の内容と重なります';
     case 'STAMP_DUPLICATE':
       return 'スタンプと同じ内容が原稿にすでにあります';
+    case 'TEXT_OVERLAP':
+      return '文字が重なっています（表示が崩れている可能性があります）';
+    case 'FONT_NOT_EMBEDDED':
+      return '埋め込まれていないフォントがあります';
+    case 'FONT_TYPE3':
+      return 'Type 3 フォント（ビットマップフォントの可能性）が使われています';
     default:
       return code;
   }
@@ -156,7 +162,11 @@ export async function annotatePreflightPdf(
     }
 
     // One sticky note per page listing everything (incl. page-level problems without a location).
-    const lines = [...new Set(codes)].map((c) => `・${describePreflightCode(c, config)}`);
+    // Problems without a location carry their detail here (e.g. the font names).
+    const lines = [...new Set(codes)].map((c) => {
+      const detail = [...new Set((result.findings ?? []).filter((f) => f.code === c && !f.rect && f.text).map((f) => f.text!))];
+      return `・${describePreflightCode(c, config)}${detail.length ? `: ${detail.join(', ')}` : ''}`;
+    });
     const located = (result.findings ?? []).filter((f) => f.rect).length;
     const note =
       `Preflight: ${report.file} p.${result.page}\n` +

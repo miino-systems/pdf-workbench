@@ -501,6 +501,10 @@ export interface PreflightConfig {
     stampCollision?: boolean;
     /** Is a stamp's text or image already in the paper (e.g. a licence line the author added)? */
     stampDuplicate?: boolean;
+    /** Different pieces of text drawn over each other (`TEXT_OVERLAP`): a sign of broken display, e.g. a logo that fell back to text. */
+    textOverlap?: boolean;
+    /** Fonts that are not embedded (`FONT_NOT_EMBEDDED`) or are Type 3 (`FONT_TYPE3`). */
+    fonts?: boolean;
   };
 }
 
@@ -515,6 +519,9 @@ export type PreflightWarningCode =
   | 'RIGHT_MARGIN'
   | 'STAMP_COLLISION'
   | 'STAMP_DUPLICATE'
+  | 'TEXT_OVERLAP'
+  | 'FONT_NOT_EMBEDDED'
+  | 'FONT_TYPE3'
   | string;
 
 /**
@@ -527,7 +534,7 @@ export interface PreflightFinding {
   /** Which check found it. */
   source: 'text' | 'raster' | 'page' | 'stamp';
   rect?: Rect;
-  /** The offending text run (text check) or stamp name (stamp check). */
+  /** The offending text run (text check), stamp name (stamp check) or font names (font check). */
   text?: string;
 }
 

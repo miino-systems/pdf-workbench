@@ -8,7 +8,7 @@
  * stamp-collision checks, rendering each page via `PdfRenderer` into an
  * offscreen canvas.
  */
-import type { MarginTolerance, PageSelector, PreflightConfig, PreflightReport, PreflightTextRule } from '@/core/types';
+import type { MarginTolerance, PageSelector, PreflightConfig, PreflightFinding, PreflightReport, PreflightTextRule } from '@/core/types';
 import { PAPER_SIZES_PT } from '@/core/units';
 import { PdfRenderer } from '@/pdf/renderer';
 import { DEFAULT_MARGIN_TOLERANCE_PT, describePreflightCode, summarizeReport } from '@/preflight';
@@ -65,17 +65,23 @@ function cloneConfig(cfg: PreflightConfig): PreflightConfig {
   if (!c.margins) c.margins = { top: 20, bottom: 20, left: 18, right: 18, unit: 'mm' };
   if (!c.page) c.page = {};
   if (!c.pages) c.pages = {};
-  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false, stampDuplicate: false };
+  if (!c.checks) c.checks = { marginText: false, marginRaster: false, stampCollision: false, stampDuplicate: false, textOverlap: false, fonts: false };
   return c;
 }
 
-/** Codes for the result table: each with its description when that says more (e.g. a text rule's message). */
-function describeCodes(codes: string[], config: PreflightConfig | undefined): string {
+/**
+ * Codes for the result table: each with its description when that says
+ * more (e.g. a text rule's message), and the detail of problems without a
+ * location (e.g. the font names of `FONT_NOT_EMBEDDED`).
+ */
+function describeCodes(codes: string[], config: PreflightConfig | undefined, findings: PreflightFinding[] = []): string {
   if (codes.length === 0) return '—';
   return codes
     .map((c) => {
       const d = describePreflightCode(c, config);
-      return d === c || /^[A-Z_]+$/.test(c) ? c : `${c}（${d}）`;
+      const label = d === c || /^[A-Z_0-9]+$/.test(c) ? c : `${c}（${d}）`;
+      const detail = [...new Set(findings.filter((f) => f.code === c && !f.rect && f.text).map((f) => f.text!))];
+      return detail.length ? `${label}: ${detail.join(', ')}` : label;
     })
     .join(', ');
 }
@@ -365,6 +371,17 @@ function buildRulesForm(
     scheduleSave();
   });
 
+  const textOverlapCheck = h('input', { type: 'checkbox', checked: draft.checks?.textOverlap ?? false });
+  textOverlapCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, textOverlap: textOverlapCheck.checked };
+    scheduleSave();
+  });
+  const fontsCheck = h('input', { type: 'checkbox', checked: draft.checks?.fonts ?? false });
+  fontsCheck.addEventListener('change', () => {
+    draft.checks = { ...draft.checks, fonts: fontsCheck.checked };
+    scheduleSave();
+  });
+
   return h(
     'div',
     null,
@@ -413,11 +430,15 @@ function buildRulesForm(
       h('label', { class: 'row' }, marginRasterCheck, '余白（描画ベース）'),
       h('label', { class: 'row' }, stampCollisionCheck, 'スタンプ衝突'),
       h('label', { class: 'row' }, stampDuplicateCheck, 'スタンプ重複'),
+      h('label', { class: 'row' }, textOverlapCheck, '文字の重なり'),
+      h('label', { class: 'row' }, fontsCheck, 'フォント埋め込み'),
     ),
     h(
       'p',
       { class: 'muted settings-note' },
-      'スタンプ重複: 有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないかを調べます（テキストは語の 8 割以上が一致すれば重複，画像は大きさが違っても同じ絵なら重複）．',
+      'スタンプ重複: 有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないかを調べます（テキストは語の 8 割以上が一致すれば重複，画像は大きさが違っても同じ絵なら重複）．' +
+        '文字の重なり: 別々の文字列が重なって描かれている箇所（ロゴが文字に化けて重なった等の表示崩れ）を報告します．' +
+        'フォント埋め込み: 埋め込まれていないフォントと Type 3 フォントを，最初に使われたページで報告します．',
     ),
     h('div', { class: 'row', style: 'margin-top:8px' }, button('保存', () => saveNowRef.save(), 'btn btn-primary btn-sm'), statusEl),
   );
@@ -621,8 +642,8 @@ export const preflightSection: Section = {
           'tr',
           null,
           h('td', null, String(p.page)),
-          h('td', null, describeCodes(p.errors ?? [], ws?.preflight)),
-          h('td', null, describeCodes(p.warnings, ws?.preflight)),
+          h('td', null, describeCodes(p.errors ?? [], ws?.preflight, p.findings)),
+          h('td', null, describeCodes(p.warnings, ws?.preflight, p.findings)),
         ),
       );
       replaceChildren(

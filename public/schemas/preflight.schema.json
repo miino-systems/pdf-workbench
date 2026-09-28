@@ -104,6 +104,14 @@
         "stampDuplicate": {
           "type": "boolean",
           "description": "有効なスタンプのテキストや画像と同じものが原稿にすでに入っていないか（著者が入れたライセンス表記やロゴとの二重化）。新規 Workspace では既定で true。"
+        },
+        "textOverlap": {
+          "type": "boolean",
+          "description": "別々の文字列が重なって描かれていないか（TEXT_OVERLAP）。ロゴが文字に化けて重なった等の表示崩れの兆候。新規 Workspace では既定で true。"
+        },
+        "fonts": {
+          "type": "boolean",
+          "description": "埋め込まれていないフォント（FONT_NOT_EMBEDDED）と Type 3 フォント（FONT_TYPE3）を報告する。新規 Workspace では既定で true。"
         }
       }
     }

@@ -46,5 +46,6 @@ export {
   textRuleCode,
   type CompiledTextRule,
 } from './textRules.js';
+export { findTextOverlaps } from './overlap.js';
 export { reportFileName, summarizeReport } from './report.js';
 export { annotatePreflightPdf, describePreflightCode } from './annotate.js';

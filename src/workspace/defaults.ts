@@ -66,6 +66,8 @@ export function createDefaultPreflightConfig(): PreflightConfig {
       marginRaster: true,
       stampCollision: true,
       stampDuplicate: true,
+      textOverlap: true,
+      fonts: true,
     },
   };
 }

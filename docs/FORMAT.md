@@ -279,7 +279,8 @@ baseline = ページ上端 − offsetY − 0.8 × size
     { "id": "orcid-id", "pages": { "kind": "first" }, "require": "\\d{4}-\\d{4}-\\d{4}-\\d{3}[\\dX]", "message": "ORCID iD が見当たりません" },
     { "id": "page-number", "forbid": "^\\d{1,3}$|Page \\d+ of \\d+", "flags": "i", "severity": "error", "message": "原稿にページ番号を入れないでください" }
   ],
-  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true, "stampDuplicate": true }
+  "checks": { "marginText": true, "marginRaster": false, "stampCollision": true, "stampDuplicate": true,
+              "textOverlap": true, "fonts": true }
 }
 ```
 
@@ -345,8 +346,21 @@ baseline = ページ上端 − offsetY − 0.8 × size
       なら見つかります。ベクター（線や文字）で描かれたロゴは画像ではない
       ため対象外で、同じ図柄でも版が違う（例: CC BY と CC BY-NC-ND）もの
       は別物と判定されます。
+  - `textOverlap`: 別々の文字列が重なって描かれている箇所（`TEXT_OVERLAP`）。
+    ロゴが描けずに文字（例: `orcid`）に化けて隣の文字に重なった、といった
+    表示崩れの兆候を見つけ、注釈付きコピーで重なった側の文字列を赤枠に
+    します。数式の添字・アクセント・演算子のような 1 文字だけの文字列、
+    隣の行と接するだけのもの、字詰めによるわずかな重なり、同じ文字列を
+    ほぼ同じ位置に重ねた疑似ボールドは対象外です（縦に 6 割以上、横に
+    狭い方の幅の 3 割かつ 2pt 以上重なったものだけを報告）。
+  - `fonts`: 埋め込まれていないフォント（`FONT_NOT_EMBEDDED`。閲覧環境の
+    フォントで代用されるので見た目が変わる・文字が化ける原因になります。
+    Helvetica や Times などの標準 14 フォントも含みます）と、Type 3 フォント
+    （`FONT_TYPE3`。古い TeX 環境のビットマップフォントなど）を、フォント
+    ごとに最初に使われたページで 1 回だけ報告します（場所がないので注釈付き
+    コピーでは付箋にフォント名が出ます）。
   - 新規作成した Workspace の既定値（`createDefaultPreflightConfig()`）
-    は 4 つとも `true` です（以前に作った Workspace の preflight.json は
+    はすべて `true` です（以前に作った Workspace の preflight.json は
     そのまま）。
 
 ---

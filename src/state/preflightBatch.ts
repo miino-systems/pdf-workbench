@@ -3,13 +3,24 @@
  * and write an annotated review copy of every PDF with problems into the
  * preflight folder (default `preflight/`), plus `summary.csv` / `summary.json`
  * listing all files. The folder is emptied first, so afterwards it holds
- * exactly the PDFs that still need attention.
+ * exactly the PDFs that still need attention, plus passed PDFs whose copy
+ * only marks phantom findings (invisible margin content, for reference).
  *
- * Rendering pages (for the raster margin and stamp-collision checks) needs
+ * Rendering pages (for the raster margin and stamp-collision checks, and for
+ * telling invisible margin text from real text) needs
  * a canvas, so the UI passes a `rasterize` function; without one only the
  * object-based checks run.
  */
-import type { PageSize, PreflightConfig, PreflightFinding, StampInstance, PreflightReport, PreflightWarningCode, Rect } from '@/core/types';
+import type {
+  PageSize,
+  PreflightConfig,
+  PreflightFinding,
+  PreflightMargins,
+  StampInstance,
+  PreflightReport,
+  PreflightWarningCode,
+  Rect,
+} from '@/core/types';
 import { WORKBENCH_FILES } from '@/core/types';
 import { toPt } from '@/core/units';
 import { sha256 } from '@/crypto';
@@ -21,8 +32,10 @@ import {
   annotatePreflightPdf,
   checkStampCollision,
   describePreflightCode,
+  countInkInRect,
   findMarginInkByRaster,
   imageSignature,
+  marginFindingsForItems,
   marginTolerancesPt,
   marginsForPage,
   mergeFindings,
@@ -53,7 +66,7 @@ export interface PreflightBatchItem {
   file: string;
   result: PreflightReport['result'] | 'failed';
   summary: string;
-  /** Workspace path of the annotated copy (only for files with problems). */
+  /** Workspace path of the annotated copy (only for files with problems or phantom findings). */
   annotated?: string;
   /** Workspace path of the saved JSON report. */
   report?: string;
@@ -82,7 +95,7 @@ function addFindings(report: PreflightReport, page: number, found: PreflightFind
   const result = report.pages.find((p) => p.page === page);
   if (!result || found.length === 0) return;
   const codes = new Set<PreflightWarningCode>(result.warnings);
-  for (const f of found) codes.add(f.code);
+  for (const f of found) if (!f.phantom) codes.add(f.code);
   result.warnings = [...codes];
   result.findings = mergeFindings([...(result.findings ?? []), ...found]);
 }
@@ -92,9 +105,43 @@ function addFindings(report: PreflightReport, page: number, found: PreflightFind
  * the raster check leaves these out, since the text check already judged
  * the run by its baseline and descenders below a last line are normal.
  */
-function textInkRect(t: PageTextBox): Rect {
+function textInkRect(t: Rect): Rect {
   const descent = t.height * 0.3;
   return { x: t.x - 0.5, y: t.y - descent, width: t.width + 1, height: t.height + descent + 0.5 };
+}
+
+const MARGIN_CODES: readonly PreflightWarningCode[] = ['TOP_MARGIN', 'BOTTOM_MARGIN', 'LEFT_MARGIN', 'RIGHT_MARGIN'];
+
+/**
+ * Re-judge a page's text margin hits against its rendering: a run that
+ * leaves no ink (invisible or white text, e.g. a leftover from the
+ * template) stays in the findings as `phantom` but no longer counts.
+ * Every hit is re-checked, not just the (capped) findings in the report.
+ */
+function markPhantomMarginText(
+  report: PreflightReport,
+  page: number,
+  items: PageTextBox[],
+  image: ImageDataLike,
+  pageSize: PageSize,
+  margins: PreflightMargins,
+): void {
+  const result = report.pages.find((p) => p.page === page);
+  if (!result) return;
+  const hits = marginFindingsForItems(items, pageSize, margins).findings.map((f) =>
+    f.rect && countInkInRect(image, pageSize, textInkRect(f.rect)) === 0 ? { ...f, phantom: true } : f,
+  );
+  if (!hits.some((f) => f.phantom)) return;
+  const isMarginText = (f: PreflightFinding): boolean => f.source === 'text' && MARGIN_CODES.includes(f.code);
+  // Before the raster checks, the margin codes on a page come only from the text check.
+  const visible = new Set(hits.filter((f) => !f.phantom).map((f) => f.code));
+  result.warnings = result.warnings.filter((c) => !MARGIN_CODES.includes(c) || visible.has(c));
+  result.findings = mergeFindings([...(result.findings ?? []).filter((f) => !isMarginText(f)), ...hits]);
+}
+
+/** Does the report hold findings kept only for reference (see `PreflightFinding.phantom`)? */
+export function hasPhantomFindings(report: PreflightReport): boolean {
+  return report.pages.some((p) => p.findings?.some((f) => f.phantom));
 }
 
 export interface PreflightOneOptions {
@@ -175,7 +222,8 @@ export async function preflightOne(
   });
 
   const collision = config.checks?.stampCollision === true && !!opts.rasterize;
-  if (!opts.rasterize || !(config.checks?.marginRaster || collision)) return report;
+  const phantomText = config.checks?.marginText === true && !!config.margins;
+  if (!opts.rasterize || !(config.checks?.marginRaster || collision || phantomText)) return report;
 
   const enabled = ws.stamps.instances.filter((i) => i.enabled);
   const metrics = opts.metrics ?? newStampMetrics(ctrl);
@@ -185,6 +233,10 @@ export async function preflightOne(
   for await (const { page, pageSize, image } of opts.rasterize(bytes)) {
     opts.signal?.throwIfAborted();
     const found: PreflightFinding[] = [];
+    if (phantomText && config.margins) {
+      const m = marginsForPage(config.margins, config.marginOverrides, page, report.pageCount);
+      markPhantomMarginText(report, page, texts.get(page) ?? [], image, pageSize, m);
+    }
     if (config.checks?.marginRaster && config.margins) {
       const m = marginsForPage(config.margins, config.marginOverrides, page, report.pageCount);
       found.push(
@@ -223,10 +275,12 @@ function newStampMetrics(ctrl: AppController): StampMetrics {
   });
 }
 
+/** The result from the codes now on the report (the same rule as `runPreflight`). */
 function recomputeResult(report: PreflightReport): void {
-  if (report.result === 'error') return;
-  if (report.pages.some((p) => (p.errors?.length ?? 0) > 0)) report.result = 'error';
-  else if (report.pages.some((p) => p.warnings.length > 0)) report.result = 'warning';
+  const docError = report.documentWarnings.some((c) => c === 'PAGE_COUNT_MIN' || c === 'PAGE_COUNT_MAX');
+  if (docError || report.pages.some((p) => (p.errors?.length ?? 0) > 0)) report.result = 'error';
+  else if (report.documentWarnings.length > 0 || report.pages.some((p) => p.warnings.length > 0)) report.result = 'warning';
+  else report.result = 'ok';
 }
 
 function csvCell(v: string | number | undefined): string {
@@ -264,7 +318,7 @@ export async function runPreflightBatch(
       const reportPath = `${WORKBENCH_FILES.reportsDir}/${reportFileName(file, ranAt)}`;
       await ws.fs.writeText(reportPath, `${JSON.stringify(report, null, 2)}\n`);
       const item: PreflightBatchItem = { file, result: report.result, summary: summarizeReport(report), report: reportPath, pageCount: report.pageCount };
-      if (report.result !== 'ok') {
+      if (report.result !== 'ok' || hasPhantomFindings(report)) {
         await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, config));
         item.annotated = annotatedPath;
       }
@@ -323,7 +377,7 @@ export async function preflightSingle(
   const annotatedPath = ctrl.preflightCopyPathFor(file, dir);
   const report = await preflightOne(ctrl, file, bytes, { rasterize: opts.rasterize });
   let annotated: string | undefined;
-  if (report.result !== 'ok') {
+  if (report.result !== 'ok' || hasPhantomFindings(report)) {
     await ws.fs.writeBytes(annotatedPath, await annotatePreflightPdf(bytes, report, ws.preflight));
     annotated = annotatedPath;
   } else if (await ws.fs.exists(annotatedPath)) {

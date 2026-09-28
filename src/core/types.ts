@@ -536,6 +536,12 @@ export interface PreflightFinding {
   rect?: Rect;
   /** The offending text run (text check), stamp name (stamp check) or font names (font check). */
   text?: string;
+  /**
+   * Nothing visible is there: margin text that renders no ink (invisible or
+   * white text), or margin ink that is all near-white. Shown in the review
+   * copy for reference, but its code is not counted in the page's warnings.
+   */
+  phantom?: boolean;
 }
 
 export interface PreflightPageResult {

@@ -33,7 +33,8 @@ export function reportFileName(file: string, date: Date = new Date()): string {
 export function summarizeReport(report: PreflightReport): string {
   const pageInfo = `${report.pageCount}ページ`;
   if (report.result === 'ok') {
-    return `問題なし (${pageInfo})`;
+    const phantoms = report.pages.reduce((n, p) => n + (p.findings?.filter((f) => f.phantom).length ?? 0), 0);
+    return phantoms ? `問題なし (${pageInfo})．見えない要素 ${phantoms} 箇所（注釈のみ）` : `問題なし (${pageInfo})`;
   }
 
   const pagesWithErrors = report.pages.filter((p) => (p.errors?.length ?? 0) > 0).length;

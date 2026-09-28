@@ -56,15 +56,15 @@ export function outputPathFor(sourcePath: string, config: WorkspaceConfig, outpu
 }
 
 /**
- * Path of the annotated preflight copy of a source PDF, named after its
- * output file: `<dir>/<outputName stem>_preflight.pdf` when `sequence.json`
- * gives an output name (sub-directories kept, `..` dropped, as for
- * {@link outputPathFor}), otherwise `<dir>/<name>_preflight.pdf`.
+ * Path of the annotated preflight copy of a source PDF: its output name
+ * (see {@link outputPathFor}, sub-directories kept) with `_preflight`
+ * before `.pdf`, inside `dir`, e.g. `preflight/report_stamped_preflight.pdf`
+ * or, with an output name from `sequence.json`, `preflight/NOLTA-01_preflight.pdf`.
  */
-export function preflightCopyPathFor(sourcePath: string, dir: string, outputName?: string): string {
-  const custom = cleanOutputName(outputName);
-  const stem = custom ? custom.replace(/\.pdf$/i, '') : basename(stripExtension(sourcePath));
-  return joinPath(dir, `${stem}_preflight.pdf`);
+export function preflightCopyPathFor(sourcePath: string, config: WorkspaceConfig, dir: string, outputName?: string): string {
+  const output = outputPathFor(sourcePath, config, outputName);
+  const relative = output.slice(joinPath(config.directories.output).length).replace(/^\//, '');
+  return joinPath(dir, relative.replace(/\.pdf$/i, '_preflight.pdf'));
 }
 
 /** A per-file output name made relative and safe (`\\` → `/`, no `.`/`..`/empty segments); `''` when unset. */

@@ -111,12 +111,13 @@ describe('workspace/paths', () => {
     expect(outputPathFor('papers/report.pdf', config, '   ')).toBe('output/report_stamped.pdf');
   });
 
-  it('preflightCopyPathFor follows the output name rule with a _preflight suffix', () => {
-    expect(preflightCopyPathFor('papers/report.pdf', 'preflight')).toBe('preflight/report_preflight.pdf');
-    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', 'NOLTA-01.pdf')).toBe('preflight/NOLTA-01_preflight.pdf');
-    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', 'sub/NOLTA-02')).toBe('preflight/sub/NOLTA-02_preflight.pdf');
-    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', '../x.PDF')).toBe('preflight/x_preflight.pdf');
-    expect(preflightCopyPathFor('papers/report.pdf', 'preflight', '  ')).toBe('preflight/report_preflight.pdf');
+  it('preflightCopyPathFor is the output name plus _preflight, inside the preflight dir', () => {
+    const config = createDefaultWorkspaceConfigForTest();
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight')).toBe('preflight/report_stamped_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', 'NOLTA-01.pdf')).toBe('preflight/NOLTA-01_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', 'sub/NOLTA-02')).toBe('preflight/sub/NOLTA-02_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', '../x.PDF')).toBe('preflight/x_preflight.pdf');
+    expect(preflightCopyPathFor('papers/report.pdf', config, 'preflight', '  ')).toBe('preflight/report_stamped_preflight.pdf');
   });
 
   it('outputPathFor builds <output dir>/<base><suffix>.pdf', () => {

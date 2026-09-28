@@ -42,12 +42,12 @@ describe('runPreflightBatch', () => {
     expect(progress).toEqual([0, 1, 2]);
     expect(res.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0 });
     const bad = res.items.find((i) => i.file === 'papers/bad.pdf')!;
-    expect(bad.annotated).toBe('preflight/bad_preflight.pdf');
+    expect(bad.annotated).toBe('preflight/bad_stamped_preflight.pdf');
     expect(res.items.find((i) => i.file === 'papers/good.pdf')!.annotated).toBeUndefined();
-    expect(await ws.fs.exists('preflight/good_preflight.pdf')).toBe(false);
+    expect(await ws.fs.exists('preflight/good_stamped_preflight.pdf')).toBe(false);
 
     // The review copy keeps all pages and carries comments on page 2 only.
-    const copy = await PDFDocument.load(await ws.fs.readBytes('preflight/bad_preflight.pdf'));
+    const copy = await PDFDocument.load(await ws.fs.readBytes('preflight/bad_stamped_preflight.pdf'));
     expect(copy.getPageCount()).toBe(2);
     expect(copy.getPage(0).node.Annots()?.size() ?? 0).toBe(0);
     const annots = copy.getPage(1).node.lookup(PDFName.of('Annots'), PDFArray);
@@ -66,7 +66,7 @@ describe('runPreflightBatch', () => {
     await ctrl.refreshFiles();
     const again = await runPreflightBatch(ctrl);
     expect(again.counts.ok).toBe(2);
-    expect(await ws.fs.exists('preflight/bad_preflight.pdf')).toBe(false);
+    expect(await ws.fs.exists('preflight/bad_stamped_preflight.pdf')).toBe(false);
   });
 });
 
@@ -90,8 +90,8 @@ describe('full re-runs and cancelling', () => {
     expect(res.total).toBe(3);
     expect(res.items.map((i) => i.file)).toEqual(['papers/a.pdf']);
     expect(await ws.fs.exists('preflight/old_leftover.pdf')).toBe(false);
-    expect(await ws.fs.exists('preflight/a_preflight.pdf')).toBe(true);
-    expect(await ws.fs.exists('preflight/b_preflight.pdf')).toBe(false);
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(true);
+    expect(await ws.fs.exists('preflight/b_stamped_preflight.pdf')).toBe(false);
     expect(JSON.parse(await ws.fs.readText('preflight/summary.json')).cancelled).toBe(true);
   });
 
@@ -134,16 +134,16 @@ describe('single-file check', () => {
     await ws.fs.writeBytes('papers/a.pdf', bad);
     const first = await preflightSingle(ctrl, 'papers/a.pdf', bad);
     expect(first.report.result).toBe('warning');
-    expect(first.annotated).toBe('preflight/a_preflight.pdf');
-    expect(await ws.fs.exists('preflight/a_preflight.pdf')).toBe(true);
+    expect(first.annotated).toBe('preflight/a_stamped_preflight.pdf');
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(true);
     let summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
     expect(summary.counts).toEqual({ ok: 1, warning: 1, error: 0, failed: 0 });
-    expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf').annotated).toBe('preflight/a_preflight.pdf');
+    expect(summary.items.find((i: { file: string }) => i.file === 'papers/a.pdf').annotated).toBe('preflight/a_stamped_preflight.pdf');
     expect(await ws.fs.readText('preflight/summary.csv')).toContain('papers/a.pdf,warning');
 
     const fixed = await preflightSingle(ctrl, 'papers/a.pdf', good);
     expect(fixed.annotated).toBeUndefined();
-    expect(await ws.fs.exists('preflight/a_preflight.pdf')).toBe(false);
+    expect(await ws.fs.exists('preflight/a_stamped_preflight.pdf')).toBe(false);
     summary = JSON.parse(await ws.fs.readText('preflight/summary.json'));
     expect(summary.counts.ok).toBe(2);
   });

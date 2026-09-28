@@ -321,6 +321,7 @@ kbd { font-family: var(--mono); border: 1px solid var(--border); border-radius: 
 }
 .file-list li.file-group:hover { background: transparent; }
 .file-list li.file-group.update { color: var(--accent); }
+.file-list li .output-name { margin-left: 8px; color: var(--muted); font-size: 12px; }
 .file-list li.needs-update { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .skip-chip {
   font-size: 10.5px; color: var(--muted); border: 1px solid var(--border);
